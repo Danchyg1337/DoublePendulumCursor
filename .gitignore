@@ -1,0 +1,19 @@
+# Build output
+build/
+cpp/build/
+out/
+*.exe
+*.obj
+*.o
+*.out
+
+# Local test scratch
+got.txt
+ref.txt
+frame.ppm
+frame.png
+
+# Editor / IDE
+.vscode/
+.idea/
+*.user

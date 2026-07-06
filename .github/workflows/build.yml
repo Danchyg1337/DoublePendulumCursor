@@ -1,0 +1,51 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:   # lets you trigger a build manually from the Actions tab
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: cpp
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (CMake + MSVC)
+        run: cmake -B build -S . -DPENDULUM_BUILD_TESTS=ON
+
+      - name: Build (Release)
+        run: cmake --build build --config Release
+
+      - name: Validate physics against the Python reference
+        shell: bash
+        run: |
+          ./build/Release/physics_tests.exe > got.txt
+          python test/reference.py > ref.txt
+          python test/compare.py got.txt ref.txt
+
+      - name: Stage the executable
+        shell: bash
+        run: cp build/Release/pendulum_cursor.exe pendulum_cursor.exe
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pendulum_cursor-windows
+          path: cpp/pendulum_cursor.exe
+          if-no-files-found: error
+
+      # On a version tag (e.g. `git tag v1.0 && git push --tags`) also publish a
+      # GitHub Release with the exe attached, so anyone can download it directly.
+      - name: Attach exe to a Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: cpp/pendulum_cursor.exe
