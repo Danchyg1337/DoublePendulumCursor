@@ -20,13 +20,17 @@ State SnapMode::advance(State s, double frameDt, double subDt) {
     }
     wasActive_ = true;
 
-    for (int i = 0; i < cfg::SUBSTEPS; ++i) {
+    const int substeps = cfg::g.SUBSTEPS;
+    const double gy = cfg::g.G;
+    const double grace = cfg::g.SNAP_GRACE_PERIOD;
+
+    for (int i = 0; i < substeps; ++i) {
         if (!bob1Locked_) {
             // bob1 falls in on its own; the well captures a slow pass, the
             // homing spring guarantees arrival once the grace period expires.
-            const bool assist = timer_ >= cfg::SNAP_GRACE_PERIOD;
+            const bool assist = timer_ >= grace;
             const JointForce f1 = assist ? JointForce::homing(t1_) : JointForce::well(t1_);
-            s = phys::step(s, 0.0, cfg::G, subDt, f1, JointForce::none());
+            s = phys::step(s, 0.0, gy, subDt, f1, JointForce::none());
 
             if (phys::settled(t1_, s.theta1, s.w1)) {
                 s.theta1 = t1_;
@@ -40,9 +44,9 @@ State SnapMode::advance(State s, double frameDt, double subDt) {
             s.theta1 = t1_;
             s.w1 = 0.0;
             const double bob2Timer = timer_ - bob1LockTime_;
-            const bool assist = bob2Timer >= cfg::SNAP_GRACE_PERIOD;
+            const bool assist = bob2Timer >= grace;
             const JointForce f2 = assist ? JointForce::homing(t2_) : JointForce::well(t2_);
-            s = phys::step(s, 0.0, cfg::G, subDt, JointForce::pin(), f2);
+            s = phys::step(s, 0.0, gy, subDt, JointForce::pin(), f2);
 
             if (phys::settled(t2_, s.theta2, s.w2)) {
                 s.theta2 = t2_;

@@ -17,3 +17,6 @@ frame.png
 .vscode/
 .idea/
 *.user
+
+# Test scratch config
+._pendulum_test.conf

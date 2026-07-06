@@ -9,20 +9,21 @@ namespace {
 // Angular accelerations of a double pendulum whose pivot is accelerating.
 void baseAccel(const State& s, double gx, double gy,
                double& w1dot, double& w2dot) {
+    const cfg::Settings& c = cfg::g;
     const double dth = s.theta1 - s.theta2;
-    const double c = std::cos(dth);
+    const double cs = std::cos(dth);
     const double sn = std::sin(dth);
 
-    const double a11 = (cfg::M1 + cfg::M2) * cfg::L1;
-    const double a12 = cfg::M2 * cfg::L2 * c;
-    const double b1  = -cfg::M2 * cfg::L2 * s.w2 * s.w2 * sn
-                       - (cfg::M1 + cfg::M2)
+    const double a11 = (c.M1 + c.M2) * c.L1;
+    const double a12 = c.M2 * c.L2 * cs;
+    const double b1  = -c.M2 * c.L2 * s.w2 * s.w2 * sn
+                       - (c.M1 + c.M2)
                              * (gy * std::sin(s.theta1) - gx * std::cos(s.theta1));
 
-    const double a21 = cfg::M2 * cfg::L1 * c;
-    const double a22 = cfg::M2 * cfg::L2;
-    const double b2  = cfg::M2 * cfg::L1 * s.w1 * s.w1 * sn
-                       - cfg::M2
+    const double a21 = c.M2 * c.L1 * cs;
+    const double a22 = c.M2 * c.L2;
+    const double b2  = c.M2 * c.L1 * s.w1 * s.w1 * sn
+                       - c.M2
                              * (gy * std::sin(s.theta2) - gx * std::cos(s.theta2));
 
     double det = a11 * a22 - a12 * a21;
@@ -39,15 +40,15 @@ double homingAccel(double target, double theta, double w) {
     double d = angleDiff(target, theta);
     if (w > 0.0 && d < 0.0)      d += 2.0 * cfg::PI;
     else if (w < 0.0 && d > 0.0) d -= 2.0 * cfg::PI;
-    return cfg::SNAP_STIFFNESS * d - cfg::SNAP_DAMPING * w;
+    return cfg::g.SNAP_STIFFNESS * d - cfg::g.snapDamping() * w;
 }
 
 // Gentle local attractor -- zero outside WELL_RADIUS, so it never disturbs
 // normal swinging; only pulls / damps once a bob is already close.
 double wellAccel(double target, double theta, double w) {
     const double d = angleDiff(target, theta);
-    if (std::fabs(d) > cfg::WELL_RADIUS) return 0.0;
-    return cfg::WELL_STIFFNESS * d - cfg::WELL_DAMPING * w;
+    if (std::fabs(d) > cfg::g.WELL_RADIUS) return 0.0;
+    return cfg::g.WELL_STIFFNESS * d - cfg::g.wellDamping() * w;
 }
 
 // Apply a joint force modifier to a naturally-computed angular acceleration.
@@ -87,8 +88,8 @@ double angleDiff(double target, double current) {
 }
 
 bool settled(double target, double theta, double w) {
-    return std::fabs(angleDiff(target, theta)) < cfg::SETTLE_ANGLE_TOL
-        && std::fabs(w) < cfg::SETTLE_VEL_TOL;
+    return std::fabs(angleDiff(target, theta)) < cfg::g.SETTLE_ANGLE_TOL
+        && std::fabs(w) < cfg::g.SETTLE_VEL_TOL;
 }
 
 State step(const State& s, double gx, double gy, double dt,
@@ -110,8 +111,8 @@ State step(const State& s, double gx, double gy, double dt,
 
     // dt-independent exponential decay (unlike a flat per-substep multiplier,
     // which coupled damping to fps/substep count -- the old "rope" bug).
-    if (cfg::FRICTION > 0.0) {
-        const double damp = std::exp(-cfg::FRICTION * dt);
+    if (cfg::g.FRICTION > 0.0) {
+        const double damp = std::exp(-cfg::g.FRICTION * dt);
         out.w1 *= damp;
         out.w2 *= damp;
     }

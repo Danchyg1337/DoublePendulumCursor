@@ -11,12 +11,13 @@
 #include <vector>
 
 CursorController::CursorController() {
-    sizeBytes_ = cfg::CANVAS * cfg::CANVAS * 4;
+    const int canvas = cfg::g.canvas();
+    sizeBytes_ = canvas * canvas * 4;
 
     BITMAPV5HEADER bi{};
     bi.bV5Size        = sizeof(BITMAPV5HEADER);
-    bi.bV5Width       = cfg::CANVAS;
-    bi.bV5Height      = -cfg::CANVAS;   // negative = top-down DIB
+    bi.bV5Width       = canvas;
+    bi.bV5Height      = -canvas;        // negative = top-down DIB
     bi.bV5Planes      = 1;
     bi.bV5BitCount    = 32;
     bi.bV5Compression = BI_BITFIELDS;
@@ -40,10 +41,9 @@ CursorController::CursorController() {
 
     // All-zero AND mask: a 32-bpp colour bitmap with an alpha channel drives
     // transparency through alpha, so the mask just needs to be fully opaque(0).
-    hbmMask_ = CreateBitmap(cfg::CANVAS, cfg::CANVAS, 1, 1, nullptr);
+    hbmMask_ = CreateBitmap(canvas, canvas, 1, 1, nullptr);
     if (hbmMask_) {
-        // CreateBitmap leaves contents undefined; zero it explicitly.
-        const int maskBytes = ((cfg::CANVAS + 15) / 16) * 2 * cfg::CANVAS;
+        const int maskBytes = ((canvas + 15) / 16) * 2 * canvas;
         std::vector<std::uint8_t> zeros(static_cast<std::size_t>(maskBytes), 0);
         SetBitmapBits(static_cast<HBITMAP>(hbmMask_), maskBytes, zeros.data());
     }
@@ -60,8 +60,8 @@ void CursorController::installCursor(const std::uint8_t* bgra, int ocrId) {
 
     ICONINFO ii{};
     ii.fIcon    = FALSE;                 // FALSE = cursor (uses hotspot)
-    ii.xHotspot = cfg::HOTSPOT_X;
-    ii.yHotspot = cfg::HOTSPOT_Y;
+    ii.xHotspot = cfg::g.hotspot();
+    ii.yHotspot = cfg::g.hotspot();
     ii.hbmMask  = static_cast<HBITMAP>(hbmMask_);
     ii.hbmColor = static_cast<HBITMAP>(hbmColor_);
 

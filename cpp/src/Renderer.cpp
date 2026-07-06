@@ -4,15 +4,14 @@
 #include <cmath>
 
 namespace {
-constexpr int   N = cfg::CANVAS;
 constexpr double INV255 = 1.0 / 255.0;
-
 inline double clamp01(double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); }
 } // namespace
 
 Renderer::Renderer()
-    : accum_(static_cast<std::size_t>(N) * N * 4, 0.0f),
-      bgra_(static_cast<std::size_t>(N) * N * 4, 0) {}
+    : n_(cfg::g.canvas()),
+      accum_(static_cast<std::size_t>(n_) * n_ * 4, 0.0f),
+      bgra_(static_cast<std::size_t>(n_) * n_ * 4, 0) {}
 
 void Renderer::clear() {
     std::fill(accum_.begin(), accum_.end(), 0.0f);
@@ -21,11 +20,11 @@ void Renderer::clear() {
 // Source-over compositing of one opaque colour at the given coverage
 // (== source alpha) into the premultiplied accumulation buffer.
 void Renderer::blend(int x, int y, double coverage, const cfg::Rgb& c) {
-    if (x < 0 || y < 0 || x >= N || y >= N) return;
+    if (x < 0 || y < 0 || x >= n_ || y >= n_) return;
     const double a = clamp01(coverage);
     if (a <= 0.0) return;
 
-    const std::size_t i = (static_cast<std::size_t>(y) * N + x) * 4;
+    const std::size_t i = (static_cast<std::size_t>(y) * n_ + x) * 4;
     const double sr = c.r * INV255 * a;   // premultiplied source
     const double sg = c.g * INV255 * a;
     const double sb = c.b * INV255 * a;
@@ -40,16 +39,15 @@ void Renderer::blend(int x, int y, double coverage, const cfg::Rgb& c) {
 void Renderer::fillCircle(double cx, double cy, double radius, const cfg::Rgb& c) {
     const int x0 = std::max(0, static_cast<int>(std::floor(cx - radius - 1.0)));
     const int y0 = std::max(0, static_cast<int>(std::floor(cy - radius - 1.0)));
-    const int x1 = std::min(N - 1, static_cast<int>(std::ceil(cx + radius + 1.0)));
-    const int y1 = std::min(N - 1, static_cast<int>(std::ceil(cy + radius + 1.0)));
+    const int x1 = std::min(n_ - 1, static_cast<int>(std::ceil(cx + radius + 1.0)));
+    const int y1 = std::min(n_ - 1, static_cast<int>(std::ceil(cy + radius + 1.0)));
 
     for (int y = y0; y <= y1; ++y) {
         for (int x = x0; x <= x1; ++x) {
             const double dx = (x + 0.5) - cx;
             const double dy = (y + 0.5) - cy;
             const double dist = std::sqrt(dx * dx + dy * dy);
-            // 1px-wide anti-aliased edge.
-            blend(x, y, radius + 0.5 - dist, c);
+            blend(x, y, radius + 0.5 - dist, c);   // 1px anti-aliased edge
         }
     }
 }
@@ -61,8 +59,8 @@ void Renderer::drawSegment(double ax, double ay, double bx, double by,
     const double pad = half + 1.0;
     const int x0 = std::max(0, static_cast<int>(std::floor(std::min(ax, bx) - pad)));
     const int y0 = std::max(0, static_cast<int>(std::floor(std::min(ay, by) - pad)));
-    const int x1 = std::min(N - 1, static_cast<int>(std::ceil(std::max(ax, bx) + pad)));
-    const int y1 = std::min(N - 1, static_cast<int>(std::ceil(std::max(ay, by) + pad)));
+    const int x1 = std::min(n_ - 1, static_cast<int>(std::ceil(std::max(ax, bx) + pad)));
+    const int y1 = std::min(n_ - 1, static_cast<int>(std::ceil(std::max(ay, by) + pad)));
 
     const double vx = bx - ax;
     const double vy = by - ay;
@@ -84,7 +82,7 @@ void Renderer::drawSegment(double ax, double ay, double bx, double by,
 
 // Convert premultiplied accumulation to straight-alpha BGRA8.
 void Renderer::pack() {
-    for (std::size_t p = 0; p < static_cast<std::size_t>(N) * N; ++p) {
+    for (std::size_t p = 0; p < static_cast<std::size_t>(n_) * n_; ++p) {
         const std::size_t i = p * 4;
         const double a = accum_[i + 3];
         std::uint8_t B = 0, G = 0, R = 0, A = 0;
@@ -104,20 +102,21 @@ void Renderer::pack() {
 
 const std::uint8_t* Renderer::render(double theta1, double theta2) {
     clear();
+    const cfg::Settings& s = cfg::g;
 
-    const double px = cfg::HOTSPOT_X;
-    const double py = cfg::HOTSPOT_Y;
-    const double x1 = px + cfg::L1 * std::sin(theta1);
-    const double y1 = py + cfg::L1 * std::cos(theta1);
-    const double x2 = x1 + cfg::L2 * std::sin(theta2);
-    const double y2 = y1 + cfg::L2 * std::cos(theta2);
+    const double px = s.hotspot();
+    const double py = s.hotspot();
+    const double x1 = px + s.L1 * std::sin(theta1);
+    const double y1 = py + s.L1 * std::cos(theta1);
+    const double x2 = x1 + s.L2 * std::sin(theta2);
+    const double y2 = y1 + s.L2 * std::cos(theta2);
 
     // Draw order matches the original: rods, then pivot, then the two bobs.
-    drawSegment(px, py, x1, y1, cfg::ROD_WIDTH, cfg::COLOR_ROD);
-    drawSegment(x1, y1, x2, y2, cfg::ROD_WIDTH, cfg::COLOR_ROD);
-    fillCircle(px, py, cfg::PIVOT_RADIUS, cfg::COLOR_PIVOT);
-    fillCircle(x1, y1, cfg::BOB_RADIUS,  cfg::COLOR_BOB1);
-    fillCircle(x2, y2, cfg::BOB_RADIUS,  cfg::COLOR_BOB2);
+    drawSegment(px, py, x1, y1, s.ROD_WIDTH, s.COLOR_ROD);
+    drawSegment(x1, y1, x2, y2, s.ROD_WIDTH, s.COLOR_ROD);
+    fillCircle(px, py, s.PIVOT_RADIUS, s.COLOR_PIVOT);
+    fillCircle(x1, y1, s.BOB_RADIUS,   s.COLOR_BOB1);
+    fillCircle(x2, y2, s.BOB_RADIUS,   s.COLOR_BOB2);
 
     pack();
     return bgra_.data();

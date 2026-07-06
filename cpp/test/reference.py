@@ -196,3 +196,24 @@ sub_dt = (1.0 / 240.0) / 6.0
 for _ in range(240 * 6):
     t1, t2, w1, w2 = step(t1, t2, w1, w2, -300.0, 2100.0, sub_dt)
 emit("free_long", t1, t2, w1, w2)
+
+# --- Scenario 7: NW-SE diagonal snap mode (new) ---
+mode = SnapMode(math.radians(-135), math.radians(45))
+t1, t2, w1, w2 = math.pi / 2, math.pi / 2, 0.0, 0.0
+frame_dt = 1.0 / 144.0
+sub_dt = frame_dt / 6.0
+b1 = b2 = -1
+for f in range(400):
+    t1, t2, w1, w2 = run_snap_mode(mode, t1, t2, w1, w2, frame_dt, sub_dt)
+    if b1 < 0 and mode.bob1_locked:
+        b1 = f
+    if b2 < 0 and mode.bob2_locked:
+        b2 = f
+emit("nwse_lockframes", b1, b2)
+emit("nwse_final", t1, t2, w1, w2)
+
+# --- Expected results of the config-file override test in test_physics.cpp ---
+emit("config_L1", 30.0)
+emit("config_G", 1000.0)
+print("config_pivot,10,20,30")
+emit("config_nwse1", math.radians(-100))
