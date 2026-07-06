@@ -1,4 +1,5 @@
 #include "AppWindow.h"
+#include "Resource.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -14,6 +15,14 @@ constexpr UINT    WM_TRAYICON  = WM_APP + 1;
 constexpr UINT    HOTKEY_ID    = 1;
 constexpr UINT    ID_EXIT      = 1001;
 
+// Prefer the embedded app icon; fall back to the generic application icon.
+HICON appIcon() {
+    HICON h = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),
+                                            MAKEINTRESOURCEW(IDI_APPICON),
+                                            IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
+    return h ? h : LoadIcon(nullptr, IDI_APPLICATION);
+}
+
 NOTIFYICONDATAW makeTrayData(HWND hwnd) {
     NOTIFYICONDATAW nid{};
     nid.cbSize = sizeof(nid);
@@ -21,8 +30,9 @@ NOTIFYICONDATAW makeTrayData(HWND hwnd) {
     nid.uID = 1;
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
-    lstrcpynW(nid.szTip, L"Double-Pendulum Cursor  -  right-click to Exit (Ctrl+Alt+P)", ARRAYSIZE(nid.szTip));
+    nid.hIcon = appIcon();
+    lstrcpynW(nid.szTip, L"Double-Pendulum Cursor  -  right-click to Exit (Ctrl+Alt+P)",
+              ARRAYSIZE(nid.szTip));
     return nid;
 }
 
@@ -49,6 +59,7 @@ AppWindow::AppWindow(std::function<void()> onExit) : onExit_(std::move(onExit)) 
     wc.lpfnWndProc = wndProc;
     wc.hInstance = inst;
     wc.lpszClassName = kClassName;
+    wc.hIcon = appIcon();
     RegisterClassExW(&wc);  // ignore "already registered" on a second instance
 
     HWND hwnd = CreateWindowExW(0, kClassName, L"Pendulum Cursor",
@@ -112,7 +123,6 @@ long long AppWindow::handle(unsigned msg, unsigned long long wParam, long long l
             return 0;
 
         case WM_ENDSESSION:
-            // Logoff / shutdown: restore immediately, we may be killed next.
             if (wParam) {
                 if (!exitFired_) { exitFired_ = true; if (onExit_) onExit_(); }
                 quit_ = true;

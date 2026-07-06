@@ -216,4 +216,10 @@ emit("nwse_final", t1, t2, w1, w2)
 emit("config_L1", 30.0)
 emit("config_G", 1000.0)
 print("config_pivot,10,20,30")
-emit("config_nwse1", math.radians(-100))
+
+# --- Expected cursors.conf parse results (test_physics.cpp) ---
+emit("cursors_count", 4)
+emit("cursor0", 32649, math.radians(-30), math.radians(90))
+emit("cursor1", 32651, math.radians(45), math.radians(-20))
+emit("cursor2", 99999, math.radians(10), math.radians(20))
+emit("cursor3", 32513, math.radians(0), math.radians(180))

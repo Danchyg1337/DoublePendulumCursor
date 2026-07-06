@@ -20,3 +20,7 @@ frame.png
 
 # Test scratch config
 ._pendulum_test.conf
+
+# Resource build output
+app.res
+._cursors_test.conf

@@ -1,12 +1,13 @@
 // Validation harness for the platform-independent code. Emits `key,value`
 // scenarios compared numerically against reference.py by compare.py.
-// Build: g++ -O2 -std=c++17 -Iinclude test/test_physics.cpp \
-//        src/Physics.cpp src/SnapMode.cpp src/Renderer.cpp src/ConfigFile.cpp -o physics_tests
+// Build: g++ -O2 -std=c++17 -Iinclude test/test_physics.cpp src/Physics.cpp
+//        src/SnapMode.cpp src/Renderer.cpp src/ConfigFile.cpp src/CursorPoses.cpp -o physics_tests
 #include "Physics.h"
 #include "SnapMode.h"
 #include "Renderer.h"
 #include "Config.h"
 #include "ConfigFile.h"
+#include "CursorPoses.h"
 
 #include <cmath>
 #include <cstdio>
@@ -62,9 +63,9 @@ int main() {
         emit4("homing_step", s);
     }
 
-    // Snap: text (vertical) and the new NW-SE diagonal.
-    runSnap("snap", cfg::g.TEXT_THETA1, cfg::g.TEXT_THETA2);     // -> snap_lockframes / snap_final
-    runSnap("nwse", cfg::g.NWSE_THETA1, cfg::g.NWSE_THETA2);
+    // Snap: text (vertical) and the NW-SE diagonal, angles from built-in poses.
+    runSnap("snap", cfg::deg2rad(0.0),   cfg::deg2rad(180.0));
+    runSnap("nwse", cfg::deg2rad(-135.0), cfg::deg2rad(45.0));
 
     {
         State s{cfg::PI / 2, cfg::PI / 2, 0.0, 0.0};
@@ -85,15 +86,32 @@ int main() {
         std::printf("render_opaque_count,%ld\n", opaque);
     }
 
-    // --- Config-file parsing (mutates cfg::g, so runs LAST) ---
+    // --- cursors.conf parsing (names, numeric ids, ':'/'=' + parens) ---
+    {
+        const std::string path = "._cursors_test.conf";
+        std::ofstream(path)
+            << "# poses\n"
+            << "hand = -30, 90\n"
+            << "help : (45, -20)\n"
+            << "99999 = 10, 20\n"
+            << "garbage line no separator\n"
+            << "text = 0, 180\n";
+        std::vector<cursors::Pose> poses;
+        cursors::load(path, poses);
+        std::remove(path.c_str());
+        std::printf("cursors_count,%zu\n", poses.size());
+        for (std::size_t i = 0; i < poses.size(); ++i)
+            std::printf("cursor%zu,%d,%.17g,%.17g\n", i,
+                        poses[i].ocrId, poses[i].theta1, poses[i].theta2);
+    }
+
+    // --- pendulum.conf parsing (mutates cfg::g, so runs LAST) ---
     {
         const std::string path = "._pendulum_test.conf";
         std::ofstream(path)
-            << "# test override\n"
             << "L1 = 30\n"
             << "G = 1000\n"
             << "COLOR_PIVOT = 10,20,30\n"
-            << "NWSE_THETA1 = -100   # degrees\n"
             << "UNKNOWN_KEY = 5\n";
         cfg::loadConfig(path);
         std::remove(path.c_str());
@@ -101,7 +119,6 @@ int main() {
         std::printf("config_G,%.17g\n", cfg::g.G);
         std::printf("config_pivot,%d,%d,%d\n",
                     cfg::g.COLOR_PIVOT.r, cfg::g.COLOR_PIVOT.g, cfg::g.COLOR_PIVOT.b);
-        std::printf("config_nwse1,%.17g\n", cfg::g.NWSE_THETA1);
     }
     return 0;
 }

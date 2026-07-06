@@ -62,22 +62,9 @@ struct Settings {
     double SETTLE_VEL_TOL   = 0.3;    // rad/s
     double SNAP_GRACE_PERIOD = 0.5;   // s a bob may fall in on its own
 
-    // ---- Snap-target angles (radians; loaded from the file in DEGREES) ------
-    // Fixed angles, deliberately not solved from L1/L2, so a pose never
-    // degenerates for any arm-length ratio. See run.py's long comment.
-    double HAND_THETA1    = deg2rad(-30.0);  // "pressable" triangle
-    double HAND_THETA2    = deg2rad( 90.0);
-    double TEXT_THETA1    = 0.0;             // "text" straight down, fold back up
-    double TEXT_THETA2    = PI;
-    double HRESIZE_THETA1 = deg2rad(-90.0);  // horizontal line: bob1 left, bob2 right
-    double HRESIZE_THETA2 = deg2rad( 90.0);
-    // Diagonal lines: rod1 points one way, rod2 the opposite (differ by 180),
-    // exactly as the H/V poses do, so pivot-bob1-bob2 form a straight line
-    // along the resize axis.
-    double NWSE_THETA1    = deg2rad(-135.0); // NW-SE (\) : bob1 up-left, bob2 down-right
-    double NWSE_THETA2    = deg2rad(  45.0);
-    double NESW_THETA1    = deg2rad( 135.0); // NE-SW (/) : bob1 up-right, bob2 down-left
-    double NESW_THETA2    = deg2rad( -45.0);
+    // Snap-target angles per cursor type are NOT here -- they live in their own
+    // cursors.conf, loaded into an array at startup (see CursorPoses.h), so new
+    // cursor types can be added without recompiling.
 
     // ---- Derived (never in the file) ----------------------------------------
     double snapDamping() const { return 2.0 * std::sqrt(SNAP_STIFFNESS); } // critical

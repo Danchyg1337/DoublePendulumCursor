@@ -3,12 +3,14 @@
 // Replaces the system cursor with a live double-pendulum simulation whose pivot
 // follows the real cursor. Runs silently in the background: no console window,
 // a system-tray icon (right-click -> Exit) and a global Ctrl+Alt+P hotkey stop
-// it and restore the normal cursor. All tunables are read from pendulum.conf at
-// startup (created next to the exe on first run if missing).
+// it and restore the normal cursor. Tunables are read from pendulum.conf and
+// per-cursor snap poses from cursors.conf at startup (both created next to the
+// exe on first run if missing).
 #include "AppWindow.h"
 #include "Config.h"
 #include "ConfigFile.h"
 #include "CursorController.h"
+#include "CursorPoses.h"
 #include "Renderer.h"
 #include "SnapMode.h"
 
@@ -60,23 +62,38 @@ bool fileExists(const std::string& p) {
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-// Load config: use the command-line path if given, else <exeDir>\pendulum.conf.
-// If that file doesn't exist yet, write a documented default so the user has
-// something to edit, then run with built-in defaults.
-void loadConfiguration() {
-    std::string path;
+// argv[1] = pendulum.conf path (optional), argv[2] = cursors.conf path (optional).
+std::string cliArg(int index) {
+    std::string result;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (argv && argc >= 2) path = narrow(argv[1]);
+    if (argv && argc > index) result = narrow(argv[index]);
     if (argv) LocalFree(argv);
+    return result;
+}
 
+// Load pendulum.conf into cfg::g; create a documented default if it's missing.
+void loadConfiguration() {
+    std::string path = cliArg(1);
     if (path.empty()) path = narrow(exeDir()) + "pendulum.conf";
+    if (fileExists(path)) cfg::loadConfig(path);
+    else                  cfg::writeDefaultConfig(path);  // defaults already active
+}
 
+// Load cursors.conf into an array; create a default if missing; fall back to
+// the built-in poses if the file is empty or unreadable.
+std::vector<cursors::Pose> loadCursorPoses() {
+    std::string path = cliArg(2);
+    if (path.empty()) path = narrow(exeDir()) + "cursors.conf";
+
+    std::vector<cursors::Pose> poses;
     if (fileExists(path)) {
-        cfg::loadConfig(path);
+        cursors::load(path, poses);
     } else {
-        cfg::writeDefaultConfig(path);  // defaults already active
+        cursors::writeDefault(path);
     }
+    if (poses.empty()) poses = cursors::defaults();
+    return poses;
 }
 
 } // namespace
@@ -84,6 +101,7 @@ void loadConfiguration() {
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     std::atexit(restoreOnce);
     loadConfiguration();
+    const std::vector<cursors::Pose> poses = loadCursorPoses();
 
     // Sub-millisecond Sleep granularity for accurate frame pacing.
     timeBeginPeriod(1);
@@ -93,18 +111,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         Renderer renderer;
         AppWindow app(restoreOnce);
 
-        // Snap modes: each falls into a fixed pose while its cursor type shows.
-        const cfg::Settings& s = cfg::g;
+        // Build one snap mode per configured cursor pose.
         std::vector<SnapMode> modes;
-        modes.emplace_back("pressable", cfg::OCR_HAND,     s.HAND_THETA1,    s.HAND_THETA2);
-        modes.emplace_back("text",      cfg::OCR_IBEAM,    s.TEXT_THETA1,    s.TEXT_THETA2);
-        modes.emplace_back("vresize",   cfg::OCR_SIZENS,   s.TEXT_THETA1,    s.TEXT_THETA2);
-        modes.emplace_back("hresize",   cfg::OCR_SIZEWE,   s.HRESIZE_THETA1, s.HRESIZE_THETA2);
-        modes.emplace_back("nwse",      cfg::OCR_SIZENWSE, s.NWSE_THETA1,    s.NWSE_THETA2);
-        modes.emplace_back("nesw",      cfg::OCR_SIZENESW, s.NESW_THETA1,    s.NESW_THETA2);
+        modes.reserve(poses.size());
+        for (const auto& p : poses)
+            modes.emplace_back(p.name, p.ocrId, p.theta1, p.theta2);
         for (auto& m : modes)
             m.setSlotHandle(controller.loadSlotHandle(m.ocrId()));
 
+        const cfg::Settings& s = cfg::g;
         phys::State state;
         state.theta1 = cfg::PI / 2.0;  // start hanging out to the side
         state.theta2 = cfg::PI / 2.0;

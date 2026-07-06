@@ -29,41 +29,45 @@ rundll32.exe user32.dll,UpdatePerUserSystemParameters
 No administrator rights are needed. To launch it automatically at login, put a
 shortcut to the exe in your Startup folder (`Win+R` -> `shell:startup`).
 
-## Configuration file
+## Two config files
 
-Every tunable lives in **`pendulum.conf`**, read at startup. On first run the app
-writes a fully-commented default file next to the exe; edit it and relaunch. Any
-key you omit keeps its built-in default. You can also pass a config path as the
-first command-line argument.
+Both are read at startup and created next to the exe on first run. Pass custom
+paths as the first (pendulum.conf) and second (cursors.conf) command-line args.
 
-The file covers geometry (arm lengths, radii), masses, gravity `G`, friction,
-timing (substeps, fps cap, forced refresh rate), the four bob/rod colours, the
-snap-capture behaviour, and every snap-target angle (in degrees). Example:
+### `pendulum.conf` -- physics & appearance
+
+Geometry (arm lengths, radii), masses, gravity `G`, friction, timing (substeps,
+fps cap, forced refresh rate), the four bob/rod colours, and the snap-capture
+behaviour. Any key you omit keeps its default.
 
 ```
 L1 = 20
-L2 = 40
 G  = 2200          # higher = snappier swing
 FRICTION = 0.35
 COLOR_PIVOT = 230,40,40
-NWSE_THETA1 = -135  # diagonal-resize pose, degrees
 ```
 
-## Snap cursor poses
+### `cursors.conf` -- which cursor type snaps to which pose
 
-| Cursor type | OCR id | Pose |
-|-------------|--------|------|
-| Hand / "pressable" | `OCR_HAND` | triangle |
-| Text I-beam | `OCR_IBEAM` | vertical line (fold) |
-| Vertical resize | `OCR_SIZENS` | vertical line |
-| Horizontal resize | `OCR_SIZEWE` | horizontal line |
-| Diagonal resize `\` | `OCR_SIZENWSE` | NW-SE line |
-| Diagonal resize `/` | `OCR_SIZENESW` | NE-SW line |
+Each line maps a cursor to a pair of target angles, loaded into an array at
+startup. **You can add cursor types here without recompiling.** The left side is
+a friendly name *or* a raw numeric OCR id; `:` works instead of `=`, and
+parentheses around the angles are ignored:
 
-The two diagonal poses use the same logic as the H/V ones: rod 1 points one way
-and rod 2 the opposite way (180 deg apart), so the pivot and both bobs form a
-straight line along the resize axis. NW-SE uses -135 deg / 45 deg; NE-SW uses
-135 deg / -45 deg.
+```
+hand    = -30, 90     # 'pressable' triangle
+text    =   0, 180    # I-beam: vertical line
+hresize = -90, 90     # horizontal resize: horizontal line
+nwse    = -135, 45    # diagonal resize "\"
+help    : (60, -60)   # give the help cursor a pose
+32650   = 20, -20     # any cursor by raw OCR id (here: app-starting)
+```
+
+Angles are degrees from straight-down, positive = clockwise. For a straight line
+along a resize axis, set `theta2 = theta1 + 180`. Known names: `hand`
+(`pressable`), `text` (`ibeam`), `vresize` (`sizens`), `hresize` (`sizewe`),
+`nwse` (`sizenwse`), `nesw` (`sizenesw`), `wait`, `cross`, `up`, `sizeall`,
+`no`, `appstarting`, `help`. Later entries for the same cursor win.
 
 ## Build
 
@@ -81,55 +85,81 @@ cmake -B build -S .
 cmake --build build --config Release
 ```
 
-Either way you get `pendulum_cursor.exe` (plus a `pendulum.conf` copied beside
-it by the CMake build).
+Either way you get `pendulum_cursor.exe`, with `pendulum.conf` and
+`cursors.conf` copied beside it by the CMake build.
+
+## Windows Defender / SmartScreen flag
+
+Defender may flag the exe as `PUA:Win32/Puwaders.*!ml`. The `!ml` suffix means
+it's a **machine-learning heuristic**, not a signature match, and "Puwaders" is
+Microsoft's family for cursor/desktop-changing PUAs. The program does exactly
+the behaviour that family is defined by -- it calls `SetSystemCursor` to replace
+every system cursor globally, runs windowless, and registers a global hotkey --
+so this is a **false positive** triggered by legitimate functionality, not by
+anything malicious.
+
+What this project already does to reduce the false positive: the exe ships with
+a proper **version-info resource** (company, product, description, version) and
+an **application icon** (`resources/app.rc`). Unsigned, metadata-less,
+default-icon binaries score much higher with the ML model, so adding these is
+the most effective no-cost mitigation.
+
+If it's still flagged, your options, best first:
+
+1. **Code-sign the exe** with an Authenticode certificate. This is the only
+   thing that reliably clears heuristic flags; it does cost money.
+2. **Submit a false-positive report** to Microsoft at
+   <https://www.microsoft.com/en-us/wdsi/filesubmission> (choose "I disagree,
+   this is clean"). They usually clear ML detections within a day or two, and
+   the fix propagates to all users via signature updates.
+3. **Add a local exclusion** (Windows Security -> Virus & threat protection ->
+   Manage settings -> Exclusions) for the exe on your own machine.
+
+Building it yourself (e.g. via the GitHub Actions workflow) rather than
+downloading a prebuilt exe also tends to avoid reputation-based flags.
 
 ## Build the .exe without a local compiler (GitHub Actions)
 
-You don't need a C++ toolchain on your machine. A workflow at
-`.github/workflows/build.yml` builds `pendulum_cursor.exe` on a Windows runner
-and validates the physics against `test/reference.py` on every push.
+A workflow at `.github/workflows/build.yml` builds `pendulum_cursor.exe` on a
+Windows runner and validates the physics against `test/reference.py` on every
+push.
 
-1. Create a repo and push this project (the workflow lives at the **repo root**,
-   with the C++ code under `cpp/`):
+1. Push this project to a repo (workflow at the **repo root**, C++ under `cpp/`):
 
    ```
    cd DoublePendulum
-   git init
-   git add .
-   git commit -m "Double-pendulum cursor (C++ port)"
+   git init && git add . && git commit -m "Double-pendulum cursor"
    git branch -M main
    git remote add origin https://github.com/<you>/<repo>.git
    git push -u origin main
    ```
 
-2. Open the repo's **Actions** tab. When the "Build Windows EXE" run is green,
-   open it and download `pendulum_cursor.exe` from the **Artifacts** section.
+2. Open the repo's **Actions** tab; when the run is green, download
+   `pendulum_cursor.exe` from the **Artifacts** section. Push a tag
+   (`git tag v1.2 && git push --tags`) to also attach it to a Release.
 
-3. Optional -- push a version tag (`git tag v1.0 && git push --tags`) and the
-   workflow also attaches the exe to a GitHub Release.
-
-Downloaded artifacts are zipped by GitHub; unzip to get the `.exe`. Drop the
-`pendulum.conf` from this folder beside it, or let the app create one on first
-run.
+Put the `pendulum.conf` and `cursors.conf` from this folder beside the exe, or
+let it create them on first run.
 
 ## Layout
 
 | File | Responsibility |
 |------|----------------|
-| `include/Config.h` | Runtime `Settings` struct (all tunables) + global `cfg::g`. |
-| `include/ConfigFile.h`, `src/ConfigFile.cpp` | Parse `pendulum.conf`; holds the `cfg::g` definition. Platform independent. |
-| `include/Physics.h`, `src/Physics.cpp` | Double-pendulum RK4 dynamics, wells, homing springs. Platform independent. |
-| `include/SnapMode.h`, `src/SnapMode.cpp` | Per-cursor-type snap pose state machine. Platform independent. |
-| `include/Renderer.h`, `src/Renderer.cpp` | Anti-aliased rasteriser into a reused BGRA buffer. Platform independent. |
-| `include/CursorController.h`, `src/CursorController.cpp` | Win32: one reused DIB section + mask, cursor install, refresh detection. |
-| `include/AppWindow.h`, `src/AppWindow.cpp` | Win32: hidden window, tray icon, quit hotkey (background operation). |
-| `src/main.cpp` | Config load, mouse sampling, frame pacing, message-pumped main loop. |
-| `pendulum.conf` | Default, fully-commented configuration. |
+| `include/Config.h` | Runtime `Settings` struct (physics/appearance) + global `cfg::g`. |
+| `include/ConfigFile.h`, `src/ConfigFile.cpp` | Parse `pendulum.conf`; holds the `cfg::g` definition. Portable. |
+| `include/CursorPoses.h`, `src/CursorPoses.cpp` | Parse `cursors.conf` into an array; name/OCR-id table; defaults. Portable. |
+| `include/Physics.h`, `src/Physics.cpp` | Double-pendulum RK4 dynamics, wells, homing springs. Portable. |
+| `include/SnapMode.h`, `src/SnapMode.cpp` | Per-cursor snap-pose state machine. Portable. |
+| `include/Renderer.h`, `src/Renderer.cpp` | Anti-aliased rasteriser into a reused BGRA buffer. Portable. |
+| `include/CursorController.h`, `src/CursorController.cpp` | Win32: reused DIB + mask, cursor install, refresh detection. |
+| `include/AppWindow.h`, `src/AppWindow.cpp` | Win32: hidden window, tray icon, quit hotkey. |
+| `include/Resource.h`, `resources/app.rc`, `resources/app.ico` | Icon + version metadata. |
+| `src/main.cpp` | Loads both config files, frame pacing, message-pumped main loop. |
+| `pendulum.conf`, `cursors.conf` | Default, commented configuration. |
 | `test/` | Portable validation harness + Python reference + numeric comparator. |
 
-Physics, snap logic, config parsing and rendering carry no Windows headers, so
-they are compiled and validated on any platform in CI.
+Physics, snap logic, and both config parsers carry no Windows headers, so they
+are compiled and validated on any platform in CI.
 
 ## What changed from the Python version
 
@@ -137,12 +167,12 @@ they are compiled and validated on any platform in CI.
   startup and reused; each frame is a `memcpy` + `CreateIconIndirect` +
   `SetSystemCursor`. Renderer buffers are sized once and reused.
 - **Hand-written rasteriser** replaces PIL + NumPy, drawing directly in BGRA
-  (the DIB's native byte order) with light anti-aliasing.
+  with light anti-aliasing.
 - **No `std::function` in the hot loop.** Snap force modifiers are a small
   inline tagged struct, keeping RK4 tight.
 - **Accurate frame pacing** via `timeBeginPeriod(1)`.
-- **Background operation**, a **runtime config file**, and two **diagonal-resize
-  snap poses** added in this revision.
+- **Background operation**, **two runtime config files**, **diagonal-resize
+  poses**, and **file-driven cursor types** (add new ones without recompiling).
 
 Physics constants and behaviour match `run.py` exactly at default settings; only
 the implementation was optimised.

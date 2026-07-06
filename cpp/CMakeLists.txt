@@ -4,7 +4,6 @@ project(pendulum_cursor CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Release-by-default: the whole point of the C++ port is low CPU cost.
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -13,6 +12,8 @@ option(PENDULUM_BUILD_TESTS "Build the portable physics/render validation harnes
 
 # --- The cursor application (Windows only) -----------------------------------
 if(WIN32)
+    enable_language(RC)   # compile resources/app.rc (icon + version metadata)
+
     # WIN32 => GUI subsystem: launches with no console window.
     add_executable(pendulum_cursor WIN32
         src/main.cpp
@@ -21,9 +22,12 @@ if(WIN32)
         src/Renderer.cpp
         src/CursorController.cpp
         src/ConfigFile.cpp
+        src/CursorPoses.cpp
         src/AppWindow.cpp
+        resources/app.rc
     )
-    target_include_directories(pendulum_cursor PRIVATE include)
+    # 'include' for headers, 'resources' so the .rc finds app.ico.
+    target_include_directories(pendulum_cursor PRIVATE include resources)
     target_link_libraries(pendulum_cursor PRIVATE user32 gdi32 winmm shell32)
     if(MSVC)
         target_compile_options(pendulum_cursor PRIVATE /O2 /W4 /permissive-)
@@ -31,11 +35,13 @@ if(WIN32)
         target_compile_options(pendulum_cursor PRIVATE -O2 -Wall -Wextra)
     endif()
 
-    # Copy the default config next to the exe so it's ready to edit.
-    add_custom_command(TARGET pendulum_cursor POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/pendulum.conf
-                $<TARGET_FILE_DIR:pendulum_cursor>/pendulum.conf)
+    # Copy the default config files next to the exe so they're ready to edit.
+    foreach(cfgfile pendulum.conf cursors.conf)
+        add_custom_command(TARGET pendulum_cursor POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${CMAKE_CURRENT_SOURCE_DIR}/${cfgfile}
+                    $<TARGET_FILE_DIR:pendulum_cursor>/${cfgfile})
+    endforeach()
 elseif(NOT PENDULUM_BUILD_TESTS)
     message(FATAL_ERROR
         "The cursor app targets Windows. On other platforms, configure with "
@@ -50,6 +56,7 @@ if(PENDULUM_BUILD_TESTS)
         src/SnapMode.cpp
         src/Renderer.cpp
         src/ConfigFile.cpp
+        src/CursorPoses.cpp
     )
     target_include_directories(physics_tests PRIVATE include)
     if(MSVC)

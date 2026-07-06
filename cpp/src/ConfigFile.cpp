@@ -20,7 +20,6 @@ std::string trim(const std::string& s) {
     return s.substr(a, b - a);
 }
 
-// Strip an inline '#' comment (kept simple: no '#' inside values).
 std::string stripComment(const std::string& s) {
     const std::size_t h = s.find('#');
     return h == std::string::npos ? s : s.substr(0, h);
@@ -104,17 +103,6 @@ bool loadConfig(const std::string& path, std::string* warnings) {
         else if (key == "COLOR_PIVOT") ok = parseColor(val, g.COLOR_PIVOT);
         else if (key == "COLOR_BOB1")  ok = parseColor(val, g.COLOR_BOB1);
         else if (key == "COLOR_BOB2")  ok = parseColor(val, g.COLOR_BOB2);
-        // Angles: file gives DEGREES, stored as radians.
-        else if (key == "HAND_THETA1")    { double d; ok = parseDouble(val, d); if (ok) g.HAND_THETA1    = deg2rad(d); }
-        else if (key == "HAND_THETA2")    { double d; ok = parseDouble(val, d); if (ok) g.HAND_THETA2    = deg2rad(d); }
-        else if (key == "TEXT_THETA1")    { double d; ok = parseDouble(val, d); if (ok) g.TEXT_THETA1    = deg2rad(d); }
-        else if (key == "TEXT_THETA2")    { double d; ok = parseDouble(val, d); if (ok) g.TEXT_THETA2    = deg2rad(d); }
-        else if (key == "HRESIZE_THETA1") { double d; ok = parseDouble(val, d); if (ok) g.HRESIZE_THETA1 = deg2rad(d); }
-        else if (key == "HRESIZE_THETA2") { double d; ok = parseDouble(val, d); if (ok) g.HRESIZE_THETA2 = deg2rad(d); }
-        else if (key == "NWSE_THETA1")    { double d; ok = parseDouble(val, d); if (ok) g.NWSE_THETA1    = deg2rad(d); }
-        else if (key == "NWSE_THETA2")    { double d; ok = parseDouble(val, d); if (ok) g.NWSE_THETA2    = deg2rad(d); }
-        else if (key == "NESW_THETA1")    { double d; ok = parseDouble(val, d); if (ok) g.NESW_THETA1    = deg2rad(d); }
-        else if (key == "NESW_THETA2")    { double d; ok = parseDouble(val, d); if (ok) g.NESW_THETA2    = deg2rad(d); }
         else {
             warn << "line " << lineNo << ": unknown key '" << key << "'\n";
             ok = true; // unknown key isn't a value error
@@ -132,6 +120,7 @@ std::string defaultConfigText() {
 "# Flying double-pendulum cursor -- configuration\n"
 "# Edit values and restart the app. Lines starting with '#' are comments.\n"
 "# Any key you remove falls back to its built-in default.\n"
+"# (Per-cursor snap angles live in a separate cursors.conf.)\n"
 "\n"
 "# ---- Geometry (pixels) ----\n"
 "PIVOT_RADIUS = 5      # red dot: the true click point\n"
@@ -165,20 +154,7 @@ std::string defaultConfigText() {
 "WELL_STIFFNESS = 122225    # gentle local attractor strength\n"
 "SETTLE_ANGLE_TOL = 0.05    # rad: 'close enough' to lock\n"
 "SETTLE_VEL_TOL = 0.3       # rad/s: 'slow enough' to lock\n"
-"SNAP_GRACE_PERIOD = 0.5    # s a bob may fall in on its own before forcing\n"
-"\n"
-"# ---- Snap-target angles (DEGREES) ----\n"
-"# Measured from straight-down, positive = clockwise (screen coords).\n"
-"HAND_THETA1    = -30    # hand/'pressable' triangle\n"
-"HAND_THETA2    = 90\n"
-"TEXT_THETA1    = 0      # text I-beam: vertical line\n"
-"TEXT_THETA2    = 180\n"
-"HRESIZE_THETA1 = -90    # horizontal resize: horizontal line\n"
-"HRESIZE_THETA2 = 90\n"
-"NWSE_THETA1    = -135   # diagonal resize \"\\\": NW-SE line\n"
-"NWSE_THETA2    = 45\n"
-"NESW_THETA1    = 135    # diagonal resize \"/\": NE-SW line\n"
-"NESW_THETA2    = -45\n";
+"SNAP_GRACE_PERIOD = 0.5    # s a bob may fall in on its own before forcing\n";
 }
 
 bool writeDefaultConfig(const std::string& path) {
