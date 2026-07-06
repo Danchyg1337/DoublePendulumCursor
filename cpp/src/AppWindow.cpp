@@ -21,7 +21,7 @@ NOTIFYICONDATAW makeTrayData(HWND hwnd) {
     nid.uID = 1;
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     lstrcpynW(nid.szTip, L"Double-Pendulum Cursor  -  right-click to Exit (Ctrl+Alt+P)", ARRAYSIZE(nid.szTip));
     return nid;
 }

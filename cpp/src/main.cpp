@@ -16,6 +16,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <shellapi.h>  // CommandLineToArgvW
 #include <mmsystem.h>   // timeBeginPeriod / timeEndPeriod
 
 #include <atomic>
