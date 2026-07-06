@@ -26,8 +26,27 @@ process is ever killed forcefully and the cursor stays stuck, restore it with:
 rundll32.exe user32.dll,UpdatePerUserSystemParameters
 ```
 
-No administrator rights are needed. To launch it automatically at login, put a
-shortcut to the exe in your Startup folder (`Win+R` -> `shell:startup`).
+No administrator rights are needed. To start it automatically at logon, use
+the installer described below -- do NOT drop the exe and .conf files into the
+Startup folder (see the note in "Autostart at logon").
+
+## Autostart at logon (recommended)
+
+Do **not** put the exe and the `.conf` files in the Startup folder. Two things
+go wrong there: (1) the Startup folder launches *every* file in it, so Windows
+also tries to "open" `pendulum.conf` and `cursors.conf` (in Notepad or a file
+picker); and (2) apps started from the Startup folder are deliberately delayed
+and throttled by Windows' startup-impact manager, so they feel slow to appear.
+
+Instead, double-click **`install.bat`** (no admin needed). It copies the exe and
+configs to `%LOCALAPPDATA%\PendulumCursor` and registers a per-user "at log on"
+scheduled task that starts promptly, at normal priority, and never touches the
+.conf files. **`uninstall.bat`** removes the task, stops the app, and restores
+your cursor. If you already added the files to your Startup folder, remove them
+from there (`Win+R` -> `shell:startup`) so nothing launches twice.
+
+The app also calls `SetPriorityClass(NORMAL_PRIORITY_CLASS)` on itself, since a
+scheduled task otherwise defaults to below-normal priority.
 
 ## Two config files
 
@@ -155,6 +174,7 @@ let it create them on first run.
 | `include/AppWindow.h`, `src/AppWindow.cpp` | Win32: hidden window, tray icon, quit hotkey. |
 | `include/Resource.h`, `resources/app.rc`, `resources/app.ico` | Icon + version metadata. |
 | `src/main.cpp` | Loads both config files, frame pacing, message-pumped main loop. |
+| `install.bat`/`.ps1`, `uninstall.bat`/`.ps1` | Set up / remove the logon autostart task. |
 | `pendulum.conf`, `cursors.conf` | Default, commented configuration. |
 | `test/` | Portable validation harness + Python reference + numeric comparator. |
 

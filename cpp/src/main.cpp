@@ -103,6 +103,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     loadConfiguration();
     const std::vector<cursors::Pose> poses = loadCursorPoses();
 
+    // A logon scheduled task (or Startup-folder launch) can start us below
+    // normal priority; force normal so cursor updates stay smooth.
+    SetPriorityClass(GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
+
     // Sub-millisecond Sleep granularity for accurate frame pacing.
     timeBeginPeriod(1);
 
