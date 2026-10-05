@@ -24,11 +24,16 @@ if(WIN32)
         src/ConfigFile.cpp
         src/CursorPoses.cpp
         src/AppWindow.cpp
+        src/BeatDsp.cpp
+        src/BeatWorker.cpp
+        src/LoopbackCapture.cpp
+        src/GifDecoder.cpp
+        src/Dancer.cpp
         resources/app.rc
     )
     # 'include' for headers, 'resources' so the .rc finds app.ico.
     target_include_directories(pendulum_cursor PRIVATE include resources)
-    target_link_libraries(pendulum_cursor PRIVATE user32 gdi32 winmm shell32)
+    target_link_libraries(pendulum_cursor PRIVATE user32 gdi32 winmm shell32 ole32)
     if(MSVC)
         target_compile_options(pendulum_cursor PRIVATE /O2 /W4 /permissive-)
     else()
@@ -42,6 +47,11 @@ if(WIN32)
                     ${CMAKE_CURRENT_SOURCE_DIR}/${cfgfile}
                     $<TARGET_FILE_DIR:pendulum_cursor>/${cfgfile})
     endforeach()
+    # The dancing GIFs (.gifbpm) go in an actors/ folder next to the exe.
+    add_custom_command(TARGET pendulum_cursor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_CURRENT_SOURCE_DIR}/actors
+                $<TARGET_FILE_DIR:pendulum_cursor>/actors)
 elseif(NOT PENDULUM_BUILD_TESTS)
     message(FATAL_ERROR
         "The cursor app targets Windows. On other platforms, configure with "
@@ -57,8 +67,19 @@ if(PENDULUM_BUILD_TESTS)
         src/Renderer.cpp
         src/ConfigFile.cpp
         src/CursorPoses.cpp
+        src/GifDecoder.cpp
     )
     target_include_directories(physics_tests PRIVATE include)
+
+    # Beat detector + GIF dancer self-test (synthetic audio, no data files).
+    add_executable(beat_tests
+        test/test_beat.cpp
+        src/BeatDsp.cpp
+        src/BeatWorker.cpp
+        src/GifDecoder.cpp
+        src/Dancer.cpp
+    )
+    target_include_directories(beat_tests PRIVATE include)
     if(MSVC)
         target_compile_options(physics_tests PRIVATE /O2)
     else()

@@ -100,9 +100,29 @@ void Renderer::pack() {
     }
 }
 
-const std::uint8_t* Renderer::render(double theta1, double theta2) {
+// Copy a premultiplied RGBA image into the (cleared) accumulation buffer.
+void Renderer::drawOverlay(const gif::Image& im, int x0, int y0) {
+    for (int y = 0; y < im.h; ++y) {
+        const int cy = y0 + y;
+        if (cy < 0 || cy >= n_) continue;
+        for (int x = 0; x < im.w; ++x) {
+            const int cx = x0 + x;
+            if (cx < 0 || cx >= n_) continue;
+            const std::uint8_t* p = &im.rgba[(static_cast<std::size_t>(y) * im.w + x) * 4];
+            float* d = &accum_[(static_cast<std::size_t>(cy) * n_ + cx) * 4];
+            d[0] = static_cast<float>(p[0] * INV255);
+            d[1] = static_cast<float>(p[1] * INV255);
+            d[2] = static_cast<float>(p[2] * INV255);
+            d[3] = static_cast<float>(p[3] * INV255);
+        }
+    }
+}
+
+const std::uint8_t* Renderer::render(double theta1, double theta2, const gif::Image* overlay) {
     clear();
     const cfg::Settings& s = cfg::g;
+    if (overlay)
+        drawOverlay(*overlay, s.hotspot() + s.GIF_OFFSET_X, s.hotspot() + s.GIF_OFFSET_Y);
 
     const double px = s.hotspot();
     const double py = s.hotspot();

@@ -1,5 +1,10 @@
 // main.cpp -- flying double-pendulum cursor for Windows (background app).
 //
+// Beat dancer: a port of BPMidentifier listens to the default output device
+// (WASAPI loopback), tracks BPM, beat phase and intensity, and while the music
+// is intense enough draws a .gifbpm GIF dancing on the beat at the cursor's
+// bottom-right (see BeatDsp.h, BeatWorker.h, LoopbackCapture.h, Dancer.h).
+//
 // Replaces the system cursor with a live double-pendulum simulation whose pivot
 // follows the real cursor. Runs silently in the background: no console window,
 // a system-tray icon (right-click -> Exit) and a global Ctrl+Alt+P hotkey stop
@@ -7,6 +12,9 @@
 // per-cursor snap poses from cursors.conf at startup (both created next to the
 // exe on first run if missing).
 #include "AppWindow.h"
+#include "BeatWorker.h"
+#include "Dancer.h"
+#include "LoopbackCapture.h"
 #include "Config.h"
 #include "ConfigFile.h"
 #include "CursorController.h"
@@ -23,6 +31,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -96,6 +105,33 @@ std::vector<cursors::Pose> loadCursorPoses() {
     return poses;
 }
 
+// ACTORS_DIR from the config; relative paths are resolved next to the exe.
+std::string actorsDir() {
+    const std::string& d = cfg::g.ACTORS_DIR;
+    const bool absolute = (d.size() > 1 && d[1] == ':') || (!d.empty() && (d[0] == '\\' || d[0] == '/'));
+    return absolute ? d : narrow(exeDir()) + d;
+}
+
+// Audio capture -> beat analysis -> GIF dancer. Members are declared in
+// dependency order so destruction stops the threads before their data goes.
+struct BeatDancer {
+    bpm::AudioRing   ring;
+    bpm::BeatWorker  worker{ring};
+    LoopbackCapture  capture{ring};
+    BeatThread       analysis{worker};
+    dancer::Dancer   dancer;
+
+    BeatDancer()
+        : dancer(actorsDir(), cfg::g.GIF_SIZE, cfg::g.SHOW_INTENSITY, cfg::g.HIDE_INTENSITY) {}
+
+    // Frame to draw at the cursor's bottom-right this frame, or nullptr.
+    const gif::Image* frame() {
+        const bpm::BeatState st = worker.state();
+        return dancer.update(bpm::nowSec(), st.bpm, st.grid, st.intensity,
+                             cfg::g.BEAT_OFFSET_MS / 1000.0);
+    }
+};
+
 } // namespace
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
@@ -114,6 +150,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         CursorController controller;
         Renderer renderer;
         AppWindow app(restoreOnce);
+        std::unique_ptr<BeatDancer> beat;
+        if (cfg::g.DANCER_ENABLED) beat = std::make_unique<BeatDancer>();
 
         // Build one snap mode per configured cursor pose.
         std::vector<SnapMode> modes;
@@ -163,6 +201,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             smoothAx += s.ACCEL_SMOOTHING * (rawAx - smoothAx);
             smoothAy += s.ACCEL_SMOOTHING * (rawAy - smoothAy);
 
+            const gif::Image* gifFrame = beat ? beat->frame() : nullptr;
+
             const void* current = controller.activeCursorHandle();
             SnapMode* active = nullptr;
             for (auto& m : modes) {
@@ -173,7 +213,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 for (auto& m : modes)
                     if (&m != active) m.deactivate();
                 state = active->advance(state, frameDt, subDt);
-                controller.installCursor(renderer.render(state.theta1, state.theta2),
+                controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame),
                                          active->ocrId());
             } else {
                 for (auto& m : modes) m.deactivate();
@@ -181,7 +221,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 const double gy = s.G - smoothAy;
                 for (int i = 0; i < s.SUBSTEPS; ++i)
                     state = phys::step(state, gx, gy, subDt);
-                controller.installCursor(renderer.render(state.theta1, state.theta2),
+                controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame),
                                          cfg::OCR_NORMAL);
             }
 

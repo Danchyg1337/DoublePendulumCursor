@@ -1,6 +1,7 @@
 #include "ConfigFile.h"
 #include "Config.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
@@ -91,6 +92,9 @@ bool loadConfig(const std::string& path, std::string* warnings) {
         else if (key == "SETTLE_ANGLE_TOL") ok = parseDouble(val, g.SETTLE_ANGLE_TOL);
         else if (key == "SETTLE_VEL_TOL")   ok = parseDouble(val, g.SETTLE_VEL_TOL);
         else if (key == "SNAP_GRACE_PERIOD") ok = parseDouble(val, g.SNAP_GRACE_PERIOD);
+        else if (key == "SHOW_INTENSITY") ok = parseDouble(val, g.SHOW_INTENSITY);
+        else if (key == "HIDE_INTENSITY") ok = parseDouble(val, g.HIDE_INTENSITY);
+        else if (key == "BEAT_OFFSET_MS") ok = parseDouble(val, g.BEAT_OFFSET_MS);
         // Ints.
         else if (key == "PIVOT_RADIUS") ok = parseInt(val, g.PIVOT_RADIUS);
         else if (key == "BOB_RADIUS")   ok = parseInt(val, g.BOB_RADIUS);
@@ -98,6 +102,17 @@ bool loadConfig(const std::string& path, std::string* warnings) {
         else if (key == "SUBSTEPS")     ok = parseInt(val, g.SUBSTEPS);
         else if (key == "FPS_CAP")      ok = parseInt(val, g.FPS_CAP);
         else if (key == "MONITOR_HZ")   ok = parseInt(val, g.MONITOR_HZ);
+        else if (key == "DANCER_ENABLED") ok = parseInt(val, g.DANCER_ENABLED);
+        else if (key == "GIF_SIZE")       ok = parseInt(val, g.GIF_SIZE);
+        else if (key == "GIF_OFFSET_X")   ok = parseInt(val, g.GIF_OFFSET_X);
+        else if (key == "GIF_OFFSET_Y")   ok = parseInt(val, g.GIF_OFFSET_Y);
+        // Strings.
+        else if (key == "ACTORS_DIR") {
+            std::string v = val;
+            if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
+            ok = !v.empty();
+            if (ok) g.ACTORS_DIR = v;
+        }
         // Colours.
         else if (key == "COLOR_ROD")   ok = parseColor(val, g.COLOR_ROD);
         else if (key == "COLOR_PIVOT") ok = parseColor(val, g.COLOR_PIVOT);
@@ -110,6 +125,11 @@ bool loadConfig(const std::string& path, std::string* warnings) {
 
         if (!ok) warn << "line " << lineNo << ": bad value for '" << key << "'\n";
     }
+
+    // keep the dancer geometry sane
+    g.GIF_SIZE = std::max(16, std::min(g.GIF_SIZE, 512));
+    g.GIF_OFFSET_X = std::max(0, g.GIF_OFFSET_X);
+    g.GIF_OFFSET_Y = std::max(0, g.GIF_OFFSET_Y);
 
     if (warnings) *warnings = warn.str();
     return true;
@@ -154,7 +174,19 @@ std::string defaultConfigText() {
 "WELL_STIFFNESS = 122225    # gentle local attractor strength\n"
 "SETTLE_ANGLE_TOL = 0.05    # rad: 'close enough' to lock\n"
 "SETTLE_VEL_TOL = 0.3       # rad/s: 'slow enough' to lock\n"
-"SNAP_GRACE_PERIOD = 0.5    # s a bob may fall in on its own before forcing\n";
+"SNAP_GRACE_PERIOD = 0.5    # s a bob may fall in on its own before forcing\n"
+"\n"
+"# ---- Beat dancer (BPMidentifier) ----\n"
+"# Listens to the default output device. While music plays and its intensity\n"
+"# is high enough, a .gifbpm GIF dances on the beat at the cursor's bottom-right.\n"
+"DANCER_ENABLED = 1         # 0 = pendulum only, no audio capture\n"
+"ACTORS_DIR = actors        # folder with .gifbpm files (relative = next to the exe)\n"
+"GIF_SIZE = 160             # px: GIF is scaled to fit this box\n"
+"GIF_OFFSET_X = 24          # px right of the pointer tip\n"
+"GIF_OFFSET_Y = 24          # px below the pointer tip\n"
+"SHOW_INTENSITY = 0.70      # 0 calm .. 1 intense: appear at/above this\n"
+"HIDE_INTENSITY = 0.62      # disappear below this (no flicker at the edge)\n"
+"BEAT_OFFSET_MS = 30        # shift the beat later to match audio output latency\n";
 }
 
 bool writeDefaultConfig(const std::string& path) {

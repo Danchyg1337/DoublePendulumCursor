@@ -12,6 +12,7 @@
 #endif
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 namespace cfg {
 
@@ -62,6 +63,18 @@ struct Settings {
     double SETTLE_VEL_TOL   = 0.3;    // rad/s
     double SNAP_GRACE_PERIOD = 0.5;   // s a bob may fall in on its own
 
+    // ---- Beat dancer (port of BPMidentifier) --------------------------------
+    // Listens to the default output device; while the music is intense enough
+    // a .gifbpm GIF dances on the beat at the bottom-right of the cursor.
+    int    DANCER_ENABLED = 1;        // 0 = pendulum only (no audio capture)
+    std::string ACTORS_DIR = "actors"; // folder of .gifbpm files (relative = next to exe)
+    int    GIF_SIZE     = 160;        // GIF is scaled to fit this box (px)
+    int    GIF_OFFSET_X = 24;         // GIF top-left, relative to the pointer tip
+    int    GIF_OFFSET_Y = 24;
+    double SHOW_INTENSITY = 0.70;     // appear at/above this intensity (0..1)
+    double HIDE_INTENSITY = 0.62;     // disappear below this (hysteresis)
+    double BEAT_OFFSET_MS = 30.0;     // delay to compensate audio output latency
+
     // Snap-target angles per cursor type are NOT here -- they live in their own
     // cursors.conf, loaded into an array at startup (see CursorPoses.h), so new
     // cursor types can be added without recompiling.
@@ -71,7 +84,13 @@ struct Settings {
     double wellDamping() const { return 2.0 * std::sqrt(WELL_STIFFNESS); }
     int margin()  const { return (PIVOT_RADIUS > BOB_RADIUS ? PIVOT_RADIUS : BOB_RADIUS) + 4; }
     int reach()   const { return static_cast<int>(L1 + L2) + margin(); }
-    int canvas()  const { return reach() * 2; }   // square cursor bitmap size
+    // Room right/below the tip for the dancing GIF (0 when disabled).
+    int dancerExtent() const {
+        return DANCER_ENABLED ? std::max(std::max(GIF_OFFSET_X, GIF_OFFSET_Y), 0) + GIF_SIZE : 0;
+    }
+    // Square cursor bitmap: the tip sits at (reach, reach); the right/bottom
+    // side grows when the GIF needs more room than the pendulum.
+    int canvas()  const { return reach() + std::max(reach(), dancerExtent()); }
     int hotspot() const { return reach(); }       // pointer tip inside the bitmap
 };
 

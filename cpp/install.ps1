@@ -22,6 +22,13 @@ foreach ($f in 'pendulum.conf','cursors.conf') {
     $p = Join-Path $src $f
     if (Test-Path $p) { Copy-Item $p $dest -Force }
 }
+# The beat dancer's GIFs (.gifbpm) live in an actors\ folder next to the exe.
+$actors = Join-Path $src 'actors'
+if (Test-Path $actors) {
+    $destActors = Join-Path $dest 'actors'
+    New-Item -ItemType Directory -Force -Path $destActors | Out-Null
+    Copy-Item (Join-Path $actors '*') $destActors -Recurse -Force
+}
 $exe = Join-Path $dest 'pendulum_cursor.exe'
 
 # 2. (Re)create the logon task.

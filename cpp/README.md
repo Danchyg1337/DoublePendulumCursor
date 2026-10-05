@@ -11,6 +11,40 @@ The port exists to cut CPU load: the Python version rebuilt a PIL image and
 allocated fresh GDI objects every single frame. This version does all per-frame
 work in a handful of reused buffers.
 
+## Beat dancer (from BPMidentifier)
+
+The cursor also carries a C++ port of the BPMidentifier project's classic
+detector + GIF dancer. It listens to the **default output device** (WASAPI
+loopback, follows device changes) and, every 0.25 s, estimates the tempo
+(spectral-flux onsets + autocorrelation with a tempo prior), the beat phase,
+the octave (snare "backbeat rule": DnB heard at 87 becomes 174) and the music
+**intensity** (0 calm .. 1 intense).
+
+While a beat is identified **and** the intensity is at/above `SHOW_INTENSITY`
+(0.70, hidden again below `HIDE_INTENSITY` 0.62), a `.gifbpm` actor from the
+`actors/` folder is drawn at the **bottom-right of the cursor**, with its
+marked beat frames landing on the music's beats. The GIF closest in tempo that
+hasn't played yet comes next; repeatable GIFs loop for at least 3 s and
+change at the end of a loop. Otherwise nothing extra is drawn -- no BPM
+number, no intensity colour.
+
+Keep the `actors/` folder (the `.gifbpm` files made with GIF BPMer) next to the
+exe; add or remove files there to change the line-up. Settings live in
+`pendulum.conf`:
+
+```
+DANCER_ENABLED = 1     # 0 = pendulum only, no audio capture
+ACTORS_DIR = actors    # relative = next to the exe
+GIF_SIZE = 160         # px box the GIF is scaled into
+GIF_OFFSET_X = 24      # GIF top-left relative to the pointer tip
+GIF_OFFSET_Y = 24
+SHOW_INTENSITY = 0.70
+HIDE_INTENSITY = 0.62
+BEAT_OFFSET_MS = 30    # shift beats later to match audio output latency
+```
+
+The GIF is part of the cursor image, so it never steals clicks.
+
 ## Runs in the background (no console)
 
 `pendulum_cursor.exe` starts silently with **no console window** and adds a
@@ -173,13 +207,21 @@ let it create them on first run.
 | `include/CursorController.h`, `src/CursorController.cpp` | Win32: reused DIB + mask, cursor install, refresh detection. |
 | `include/AppWindow.h`, `src/AppWindow.cpp` | Win32: hidden window, tray icon, quit hotkey. |
 | `include/Resource.h`, `resources/app.rc`, `resources/app.ico` | Icon + version metadata. |
+| `include/BeatDsp.h`, `src/BeatDsp.cpp` | Tempo estimator, intensity meter, snare/octave rule, stabiliser, beat clock (port of `bpm_detector.py` / `bpm_common.py`). Portable. |
+| `include/BeatWorker.h`, `src/BeatWorker.cpp` | Audio ring buffer + the 4 Hz analysis loop (`ClassicWorker`). Portable. |
+| `include/LoopbackCapture.h`, `src/LoopbackCapture.cpp` | Win32: WASAPI loopback of the default output device; analysis thread. |
+| `include/GifDecoder.h`, `src/GifDecoder.cpp` | Self-contained animated GIF decoder + bilinear resize. Portable. |
+| `include/Dancer.h`, `src/Dancer.cpp` | `.gifbpm` loader and the beat-synced playback engine (port of `gif_dancer.py`). Portable. |
+| `actors/` | The `.gifbpm` dancers. |
 | `src/main.cpp` | Loads both config files, frame pacing, message-pumped main loop. |
 | `install.bat`/`.ps1`, `uninstall.bat`/`.ps1` | Set up / remove the logon autostart task. |
 | `pendulum.conf`, `cursors.conf` | Default, commented configuration. |
 | `test/` | Portable validation harness + Python reference + numeric comparator. |
 
-Physics, snap logic, and both config parsers carry no Windows headers, so they
-are compiled and validated on any platform in CI.
+Physics, snap logic, both config parsers, the beat detector and the GIF
+dancer carry no Windows headers, so they are compiled and validated on any
+platform in CI (`test/test_beat.cpp` checks BPM, beat phase, GIF decoding and
+on-beat playback with synthetic audio).
 
 ## What changed from the Python version
 

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "Config.h"
+#include "GifDecoder.h"
 #include <cstdint>
 #include <vector>
 
@@ -17,8 +18,11 @@ public:
     Renderer();
 
     // Render the pose for the given angles; returns size()*size() BGRA8 pixels.
-    // The pointer is stable for the life of the Renderer.
-    const std::uint8_t* render(double theta1, double theta2);
+    // `overlay` (premultiplied RGBA, e.g. the dancing GIF frame) is drawn first
+    // with its top-left at tip + (GIF_OFFSET_X, GIF_OFFSET_Y), the pendulum on
+    // top of it. The pointer is stable for the life of the Renderer.
+    const std::uint8_t* render(double theta1, double theta2,
+                               const gif::Image* overlay = nullptr);
 
     int size() const { return n_; }          // canvas edge in pixels
     int stride() const { return n_ * 4; }
@@ -30,6 +34,7 @@ private:
     void fillCircle(double cx, double cy, double radius, const cfg::Rgb& c);
     void drawSegment(double x0, double y0, double x1, double y1,
                      double width, const cfg::Rgb& c);
+    void drawOverlay(const gif::Image& im, int x0, int y0);
     void pack();
 
     int                       n_;      // canvas size (square)
