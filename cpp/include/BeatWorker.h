@@ -63,7 +63,8 @@ class BeatWorker {
 public:
     static constexpr double UPDATE_SEC = 0.25;
 
-    explicit BeatWorker(AudioRing& ring);
+    // fastDrop = false -> intensity exactly as BPMidentifier (slower on drops)
+    explicit BeatWorker(AudioRing& ring, bool fastDrop = true);
     // One analysis update (the body of ClassicWorker.run's loop).
     void step();
     BeatState state() const;

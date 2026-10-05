@@ -67,8 +67,9 @@ std::optional<double> AudioRing::sampleTime(double sampleIndex) const {
 }
 
 // ---- BeatWorker -----------------------------------------------------------------
-BeatWorker::BeatWorker(AudioRing& ring)
-    : ring_(ring), tracker_(3, OCT_ENTER_V2, OCT_EXIT_V2, true), meter_(UPDATE_SEC) {}
+BeatWorker::BeatWorker(AudioRing& ring, bool fastDrop)
+    : ring_(ring), tracker_(3, OCT_ENTER_V2, OCT_EXIT_V2, true),
+      meter_(UPDATE_SEC, 60.0, fastDrop ? 0.5 : 0.0, fastDrop ? 0.15 : 0.4) {}
 
 BeatState BeatWorker::state() const {
     std::lock_guard<std::mutex> lk(outM_);

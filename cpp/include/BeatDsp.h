@@ -95,12 +95,15 @@ private:
 // ---- intensity ------------------------------------------------------------------
 class IntensityMeter {
 public:
-    explicit IntensityMeter(double updateSec = 0.25, double memorySec = 60.0);
+    // fastWindowSec = 0 and attackTau = 0.4 reproduce BPMidentifier exactly;
+    // the defaults react to a drop much sooner (see update()).
+    explicit IntensityMeter(double updateSec = 0.25, double memorySec = 60.0,
+                            double fastWindowSec = 0.5, double attackTau = 0.15);
     void reset();
     std::optional<double> update(const TempoEstimator& est);
     std::optional<double> value() const { return value_; }
 private:
-    double dt_, alpha_;
+    double dt_, alpha_, fastWindow_, attackTau_;
     bool   init_ = false;
     std::array<double, 4> mu_{}, var_{};
     std::optional<double> value_;

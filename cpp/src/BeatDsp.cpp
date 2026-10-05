@@ -373,10 +373,13 @@ std::optional<double> TempoEstimator::beatPhase(double periodSec, double lookbac
 namespace {
 constexpr double W_INT[4]  = { 0.35, 0.30, 0.25, 0.10 };   // sub, flat, loud, act
 constexpr double FLOORS[4] = { 0.05, 0.05, 2.0, 0.01 };    // min std for z-scores
+constexpr double FAST_MARGIN = 0.10;   // short window must beat the 2 s one by this much
 } // namespace
 
-IntensityMeter::IntensityMeter(double updateSec, double memorySec)
-    : dt_(updateSec), alpha_(updateSec / memorySec) { reset(); }
+IntensityMeter::IntensityMeter(double updateSec, double memorySec, double fastWindowSec,
+                               double attackTau)
+    : dt_(updateSec), alpha_(updateSec / memorySec), fastWindow_(fastWindowSec),
+      attackTau_(attackTau) { reset(); }
 
 void IntensityMeter::reset() { init_ = false; value_.reset(); }
 
@@ -384,34 +387,56 @@ std::optional<double> IntensityMeter::update(const TempoEstimator& est) {
     const std::size_t L = static_cast<std::size_t>(2.0 * est.fps());
     const auto& feat = est.features();
     if (feat.size() < L || L == 0) return value_;
-    double m[4] = {0, 0, 0, 0};
-    for (std::size_t i = feat.size() - L; i < feat.size(); ++i)
-        for (int c = 0; c < 4; ++c) m[c] += feat[i][c];
-    for (double& v : m) v /= L;
-    const double rms = m[2];
-    if (rms < 1e-3) return value_;                           // silence
-    const double x[4] = { m[0], m[1], 20 * std::log10(rms + 1e-9), m[3] };
+
+    // mean features of the last `w` frames -> (sub, flat, loudness dB, act);
+    // false on silence
+    auto window = [&](std::size_t w, double x[4]) {
+        double m[4] = {0, 0, 0, 0};
+        for (std::size_t i = feat.size() - w; i < feat.size(); ++i)
+            for (int c = 0; c < 4; ++c) m[c] += feat[i][c];
+        for (double& v : m) v /= w;
+        if (m[2] < 1e-3) return false;
+        x[0] = m[0]; x[1] = m[1]; x[2] = 20 * std::log10(m[2] + 1e-9); x[3] = m[3];
+        return true;
+    };
+    // absolute part + part relative to this track's last ~60 s
+    auto targetOf = [&](const double x[4]) {
+        double dot = 0;
+        for (int c = 0; c < 4; ++c) {
+            double z = (x[c] - mu_[c]) / std::max(std::sqrt(var_[c]), FLOORS[c]);
+            z = std::min(3.0, std::max(-3.0, z));
+            dot += W_INT[c] * z;
+        }
+        const double rel = 1.0 / (1.0 + std::exp(-1.3 * dot));
+        const double absol = 0.55 * std::min(1.0, x[0] / 0.35) + 0.45 * std::min(1.0, x[1] / 0.4);
+        return 0.6 * absol + 0.4 * rel;
+    };
+
+    double x[4];
+    if (!window(L, x)) return value_;                        // silence
     if (!init_) {
         for (int c = 0; c < 4; ++c) { mu_[c] = x[c]; var_[c] = FLOORS[c] * FLOORS[c]; }
         init_ = true;
     }
-    double dot = 0;
-    for (int c = 0; c < 4; ++c) {
-        double z = (x[c] - mu_[c]) / std::max(std::sqrt(var_[c]), FLOORS[c]);
-        z = std::min(3.0, std::max(-3.0, z));
-        dot += W_INT[c] * z;
+    double target = targetOf(x);
+    // Fast drop detection: the 2 s average only reaches a drop's level after
+    // ~2 s, so also score the last `fastWindow_` seconds and take whichever is
+    // higher. Falls still follow the 2 s window (and the slow release).
+    const std::size_t S = static_cast<std::size_t>(fastWindow_ * est.fps());
+    double xs[4];
+    if (S > 0 && S < L && window(S, xs)) {
+        const double fast = targetOf(xs);
+        if (fast > target + FAST_MARGIN) target = fast;      // a real jump, not jitter
     }
-    for (int c = 0; c < 4; ++c) {
+
+    for (int c = 0; c < 4; ++c) {                            // track statistics: 2 s window
         mu_[c] += alpha_ * (x[c] - mu_[c]);
         var_[c] += alpha_ * ((x[c] - mu_[c]) * (x[c] - mu_[c]) - var_[c]);
     }
-    const double rel = 1.0 / (1.0 + std::exp(-1.3 * dot));
-    const double absol = 0.55 * std::min(1.0, x[0] / 0.35) + 0.45 * std::min(1.0, x[1] / 0.4);
-    const double target = 0.6 * absol + 0.4 * rel;
     if (!value_) {
         value_ = target;
     } else {
-        const double tau = target > *value_ ? 0.4 : 1.5;     // fast up, slow down
+        const double tau = target > *value_ ? attackTau_ : 1.5;   // fast up, slow down
         *value_ += (target - *value_) * (1 - std::exp(-dt_ / tau));
     }
     return value_;

@@ -41,6 +41,7 @@ GIF_OFFSET_Y = 24
 SHOW_INTENSITY = 0.70
 HIDE_INTENSITY = 0.62
 BEAT_OFFSET_MS = 30    # shift beats later to match audio output latency
+FAST_DROP = 1          # 1 = appear ~0.5 s after a drop (0 = original, ~2 s)
 ```
 
 The GIF is part of the cursor image, so it never steals clicks.

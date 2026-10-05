@@ -74,6 +74,8 @@ struct Settings {
     double SHOW_INTENSITY = 0.70;     // appear at/above this intensity (0..1)
     double HIDE_INTENSITY = 0.62;     // disappear below this (hysteresis)
     double BEAT_OFFSET_MS = 30.0;     // delay to compensate audio output latency
+    int    FAST_DROP = 1;             // 1 = intensity reacts to drops in ~0.5 s
+                                      // 0 = exactly as BPMidentifier (~2 s)
 
     // Snap-target angles per cursor type are NOT here -- they live in their own
     // cursors.conf, loaded into an array at startup (see CursorPoses.h), so new

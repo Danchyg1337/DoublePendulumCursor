@@ -24,6 +24,7 @@ constexpr double JUMP_CONFIRM_SEC = 0.6;    // a phase jump must hold this long
 constexpr double TEMPO_SMALL = 0.04;        // relative tempo change treated as drift
 constexpr double TEMPO_CONFIRM_SEC = 1.5;   // a bigger tempo change must hold this long
 constexpr double MIN_LOOP_PLAY_SEC = 3.0;   // repeatable GIF plays at least this long
+constexpr double PRE_STRETCH = 1.35;        // max intro speed change on a fresh start
 // one marked GIF beat always = one music beat; (gif beats per music beat, penalty)
 constexpr double RATIOS[][2] = { {1.0, 0.0} };
 
@@ -390,10 +391,27 @@ std::pair<const Actor*, double> DancerEngine::pick(double bpm, const Actor* excl
 }
 
 void DancerEngine::startFresh(double bpm) {
+    // Start moving right away -- never hold a frozen frame 0 while waiting for
+    // the "right" beat (that showed as a stutter when the GIF first appeared).
+    //  a) Play the intro from frame 0 starting now, slightly sped up / slowed
+    //     down (within PRE_STRETCH) so its first beat frame lands on a beat.
+    //  b) If no beat is reachable that way, join the GIF "already in progress"
+    //     as if it had started on time, skipping < 1 beat of its intro.
+    // Either way the beat frames stay on the music's beats.
     const auto [actor, ratio] = pick(bpm);
+    const double phi = *phi_;
     const double pre = naturalPhi(actor, ratio, actor->beatTimes.front());
-    const double phiB = std::ceil(*phi_ + pre + 0.05);   // first beat the pre-roll can reach
-    cur_.emplace(actor, ratio, phiB, pre);               // frame 0 held until phiB - pre
+    double bestB = 0, bestCost = std::numeric_limits<double>::infinity();
+    for (const double b : { std::floor(phi + pre), std::ceil(phi + pre) }) {
+        const double span = b - phi;
+        if (pre <= 1e-9 || span < 0.15) continue;           // too short to play an intro
+        const double cost = std::fabs(std::log(span / pre));
+        if (cost <= std::log(PRE_STRETCH) && cost < bestCost) { bestCost = cost; bestB = b; }
+    }
+    if (bestCost < std::numeric_limits<double>::infinity())
+        cur_.emplace(actor, ratio, bestB, bestB - phi);     // a) intro starts now
+    else
+        cur_.emplace(actor, ratio, std::floor(phi + pre), pre);  // b) join in progress
     next_.reset();
 }
 

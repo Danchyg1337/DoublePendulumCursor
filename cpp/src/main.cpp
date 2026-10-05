@@ -116,7 +116,7 @@ std::string actorsDir() {
 // dependency order so destruction stops the threads before their data goes.
 struct BeatDancer {
     bpm::AudioRing   ring;
-    bpm::BeatWorker  worker{ring};
+    bpm::BeatWorker  worker{ring, cfg::g.FAST_DROP != 0};
     LoopbackCapture  capture{ring};
     BeatThread       analysis{worker};
     dancer::Dancer   dancer;

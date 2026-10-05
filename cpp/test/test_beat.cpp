@@ -192,6 +192,32 @@ int main() {
         check(beatsChecked > 10 && onBeat == beatsChecked, "dancer_on_beat",
               std::to_string(onBeat) + "/" + std::to_string(beatsChecked));
         check(!eng.step(11.0, std::nullopt, std::nullopt).actor, "dancer_hidden_without_beat");
+
+        // first appearance must not hold a frozen frame: from any beat phase,
+        // the first frame may last at most ~1 stretched GIF frame (here 250 ms
+        // at 120 BPM, +35% intro stretch), and beat frames still land on beats
+        double worstHold = 0;
+        bool beatsOk = true;
+        for (int s = 0; s < 40; ++s) {
+            dancer::DancerEngine e2({&a});
+            const double t0 = 1.0 + s * 0.0125;              // start phases 0..1 beat
+            int firstFrame = -1;
+            double firstChange = -1;
+            for (int i = 0; i < 1200; ++i) {
+                const double t = t0 + i * 0.005;
+                const auto o = e2.step(t, 120, grid);
+                if (!o.actor) continue;
+                if (firstFrame < 0) firstFrame = o.frame;
+                else if (firstChange < 0 && o.frame != firstFrame) firstChange = t - t0;
+                const double bp = t / 0.5;
+                if (t > t0 + 1.0 && std::fabs(bp - std::round(bp)) < 1e-9 && o.frame != 0 && o.frame != 2)
+                    beatsOk = false;
+            }
+            worstHold = std::max(worstHold, firstChange);
+        }
+        check(worstHold <= 0.25 * 1.35 + 0.01, "dancer_no_start_stutter",
+              "first frame held " + std::to_string(worstHold) + " s");
+        check(beatsOk, "dancer_fresh_start_on_beat");
     }
 
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);

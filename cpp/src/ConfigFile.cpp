@@ -103,6 +103,7 @@ bool loadConfig(const std::string& path, std::string* warnings) {
         else if (key == "FPS_CAP")      ok = parseInt(val, g.FPS_CAP);
         else if (key == "MONITOR_HZ")   ok = parseInt(val, g.MONITOR_HZ);
         else if (key == "DANCER_ENABLED") ok = parseInt(val, g.DANCER_ENABLED);
+        else if (key == "FAST_DROP")      ok = parseInt(val, g.FAST_DROP);
         else if (key == "GIF_SIZE")       ok = parseInt(val, g.GIF_SIZE);
         else if (key == "GIF_OFFSET_X")   ok = parseInt(val, g.GIF_OFFSET_X);
         else if (key == "GIF_OFFSET_Y")   ok = parseInt(val, g.GIF_OFFSET_Y);
@@ -186,7 +187,8 @@ std::string defaultConfigText() {
 "GIF_OFFSET_Y = 24          # px below the pointer tip\n"
 "SHOW_INTENSITY = 0.70      # 0 calm .. 1 intense: appear at/above this\n"
 "HIDE_INTENSITY = 0.62      # disappear below this (no flicker at the edge)\n"
-"BEAT_OFFSET_MS = 30        # shift the beat later to match audio output latency\n";
+"BEAT_OFFSET_MS = 30        # shift the beat later to match audio output latency\n"
+"FAST_DROP = 1              # 1 = show ~0.5 s after a drop; 0 = original BPMidentifier (~2 s)\n";
 }
 
 bool writeDefaultConfig(const std::string& path) {
