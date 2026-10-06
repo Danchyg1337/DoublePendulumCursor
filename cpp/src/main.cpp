@@ -25,6 +25,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifndef NOMINMAX
+#define NOMINMAX   // keep std::min / std::max usable (MSVC's windows.h macros)
+#endif
 #include <windows.h>
 #include <shellapi.h>  // CommandLineToArgvW
 #include <mmsystem.h>   // timeBeginPeriod / timeEndPeriod

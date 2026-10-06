@@ -161,7 +161,7 @@ int decode(const std::uint8_t* data, std::size_t size,
         if (prevDisposal == 2) {
             for (int y = std::max(0, py); y < std::min(canvas.h, py + ph); ++y)
                 for (int x = std::max(0, px); x < std::min(canvas.w, px + pw); ++x)
-                    std::fill_n(&canvas.rgba[(static_cast<std::size_t>(y) * canvas.w + x) * 4], 4, 0);
+                    std::fill_n(&canvas.rgba[(static_cast<std::size_t>(y) * canvas.w + x) * 4], 4, std::uint8_t{0});
         } else if (prevDisposal == 3 && !saved.empty()) {
             canvas.rgba = saved;
         }
