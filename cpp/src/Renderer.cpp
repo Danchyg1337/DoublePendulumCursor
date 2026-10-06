@@ -5,6 +5,44 @@
 
 namespace {
 constexpr double INV255 = 1.0 / 255.0;
+
+// 5x7 pixel font for the debug overlay ('#' = on).
+const char* glyph(char ch) {
+    switch (ch) {
+        case '0': return " ### #   ##  ### # ###  ##   # ### ";
+        case '1': return "  #   ##    #    #    #    #   ### ";
+        case '2': return " ### #   #    #   #   #   #   #####";
+        case '3': return "#####   #   #     #     ##   # ### ";
+        case '4': return "   #   ##  # # #  # #####   #    # ";
+        case '5': return "######    ####     #    ##   # ### ";
+        case '6': return "  ##  #   #    #### #   ##   # ### ";
+        case '7': return "#####    #   #   #   #    #    #   ";
+        case '8': return " ### #   ##   # ### #   ##   # ### ";
+        case '9': return " ### #   ##   # ####    #   #  ##  ";
+        case '.': return "                          ##   ##  ";
+        case '-': return "               #####               ";
+        case ':': return "      ##   ##        ##   ##       ";
+        case '*': return "     # # # ### ##### ### # # #     ";
+        case 'A': return " ### #   ##   #######   ##   ##   #";
+        case 'B': return "#### #   ##   ##### #   ##   ##### ";
+        case 'D': return "#### #   ##   ##   ##   ##   ##### ";
+        case 'E': return "######    #    #### #    #    #####";
+        case 'F': return "######    #    #### #    #    #    ";
+        case 'G': return " ### #   ##    # ####   ##   # ### ";
+        case 'H': return "#   ##   ##   #######   ##   ##   #";
+        case 'I': return " ###   #    #    #    #    #   ### ";
+        case 'L': return "#    #    #    #    #    #    #####";
+        case 'M': return "#   ### ### # ## # ##   ##   ##   #";
+        case 'N': return "#   ###  ## # ##  ###   ##   ##   #";
+        case 'O': return " ### #   ##   ##   ##   ##   # ### ";
+        case 'P': return "#### #   ##   ##### #    #    #    ";
+        case 'R': return "#### #   ##   ##### # #  #  # #   #";
+        case 'S': return " #####    #     ###     #    ##### ";
+        case 'T': return "#####  #    #    #    #    #    #  ";
+        case 'W': return "#   ##   ##   ## # ## # ### ###   #";
+        default:  return nullptr;
+    }
+}
 inline double clamp01(double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); }
 } // namespace
 
@@ -118,7 +156,33 @@ void Renderer::drawOverlay(const gif::Image& im, int x0, int y0) {
     }
 }
 
-const std::uint8_t* Renderer::render(double theta1, double theta2, const gif::Image* overlay) {
+// Debug text: a dark 1-px (scaled) outline, then the glyphs on top.
+void Renderer::drawText(const std::string& str, int x0, int y0, int scale, const cfg::Rgb& c) {
+    static const cfg::Rgb outline{ 0, 0, 0 };
+    for (int pass = 0; pass < 2; ++pass) {
+        int x = x0;
+        for (char ch : str) {
+            const char* g = glyph(ch);
+            if (g) {
+                for (int i = 0; i < 35 && g[i]; ++i) {
+                    if (g[i] != '#') continue;
+                    const int gx = x + (i % 5) * scale, gy = y0 + (i / 5) * scale;
+                    if (pass == 0) {
+                        for (int dy = -1; dy <= scale; ++dy)
+                            for (int dx = -1; dx <= scale; ++dx) blend(gx + dx, gy + dy, 0.85, outline);
+                    } else {
+                        for (int dy = 0; dy < scale; ++dy)
+                            for (int dx = 0; dx < scale; ++dx) blend(gx + dx, gy + dy, 1.0, c);
+                    }
+                }
+            }
+            x += 6 * scale;
+        }
+    }
+}
+
+const std::uint8_t* Renderer::render(double theta1, double theta2, const gif::Image* overlay,
+                                     const std::vector<TextLine>* text) {
     clear();
     const cfg::Settings& s = cfg::g;
     if (overlay)
@@ -137,6 +201,15 @@ const std::uint8_t* Renderer::render(double theta1, double theta2, const gif::Im
     fillCircle(px, py, s.PIVOT_RADIUS, s.COLOR_PIVOT);
     fillCircle(x1, y1, s.BOB_RADIUS,   s.COLOR_BOB1);
     fillCircle(x2, y2, s.BOB_RADIUS,   s.COLOR_BOB2);
+
+    if (text) {                       // debug lines above-right of the tip
+        const int scale = 2, lineH = 8 * scale + 2;
+        int y = std::max(1, s.hotspot() - static_cast<int>(text->size()) * lineH - 6);
+        for (const TextLine& l : *text) {
+            drawText(l.text, s.hotspot() + 14, y, scale, l.color);
+            y += lineH;
+        }
+    }
 
     pack();
     return bgra_.data();

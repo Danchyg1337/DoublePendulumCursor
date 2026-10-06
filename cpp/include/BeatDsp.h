@@ -102,8 +102,15 @@ public:
     void reset();
     std::optional<double> update(const TempoEstimator& est);
     std::optional<double> value() const { return value_; }
+    // Debug: the last update's scores before smoothing -- 2 s window, short
+    // (fast-drop) window, and whether the short one was used.
+    std::optional<double> lastSlow() const { return lastSlow_; }
+    std::optional<double> lastFast() const { return lastFast_; }
+    bool fastUsed() const { return fastUsed_; }
 private:
     double dt_, alpha_, fastWindow_, attackTau_;
+    std::optional<double> lastSlow_, lastFast_;
+    bool fastUsed_ = false;
     bool   init_ = false;
     std::array<double, 4> mu_{}, var_{};
     std::optional<double> value_;

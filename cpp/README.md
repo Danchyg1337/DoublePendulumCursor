@@ -46,6 +46,20 @@ FAST_DROP = 1          # 1 = appear ~0.5 s after a drop (0 = original, ~2 s)
 
 The GIF is part of the cursor image, so it never steals clicks.
 
+### Debug overlay
+
+Set `DEBUG = 1` in `pendulum.conf` to always see, above-right of the cursor:
+
+```
+BPM 128            detected tempo (-- = no beat yet)
+I 0.72 SHOW        intensity, coloured green..yellow..red; SHOW = GIF allowed
+S 0.65 F 0.81*     score of the 2 s window, of the 0.5 s window;
+                   * = the 0.5 s (FAST_DROP) score drove the value this update
+```
+
+`DEBUG_LOG = 1` also writes those values 4 times a second to
+`debug_log.csv` next to the exe (overwritten at each start).
+
 ## Runs in the background (no console)
 
 `pendulum_cursor.exe` starts silently with **no console window** and adds a

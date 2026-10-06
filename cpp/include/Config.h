@@ -76,6 +76,8 @@ struct Settings {
     double BEAT_OFFSET_MS = 30.0;     // delay to compensate audio output latency
     int    FAST_DROP = 1;             // 1 = intensity reacts to drops in ~0.5 s
                                       // 0 = exactly as BPMidentifier (~2 s)
+    int    DEBUG = 0;                 // 1 = draw BPM + intensity next to the cursor
+    int    DEBUG_LOG = 0;             // 1 = also write debug_log.csv next to the exe
 
     // Snap-target angles per cursor type are NOT here -- they live in their own
     // cursors.conf, loaded into an array at startup (see CursorPoses.h), so new
@@ -88,7 +90,9 @@ struct Settings {
     int reach()   const { return static_cast<int>(L1 + L2) + margin(); }
     // Room right/below the tip for the dancing GIF (0 when disabled).
     int dancerExtent() const {
-        return DANCER_ENABLED ? std::max(std::max(GIF_OFFSET_X, GIF_OFFSET_Y), 0) + GIF_SIZE : 0;
+        if (!DANCER_ENABLED) return 0;
+        const int gif = std::max(std::max(GIF_OFFSET_X, GIF_OFFSET_Y), 0) + GIF_SIZE;
+        return DEBUG ? std::max(gif, 186) : gif;    // debug text needs ~186 px
     }
     // Square cursor bitmap: the tip sits at (reach, reach); the right/bottom
     // side grows when the GIF needs more room than the pendulum.

@@ -111,6 +111,7 @@ public:
                              const std::optional<bpm::Grid>& grid,
                              const std::optional<double>& intensity, double offsetSec);
     bool ready() const { return ready_.load(); }
+    bool showing() const { return inRed_; }   // intensity is in the "show" zone
 
 private:
     bool redZone(const std::optional<double>& intensity);

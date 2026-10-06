@@ -57,6 +57,11 @@ struct BeatState {
     std::optional<int>    bpm;        // displayed (stabilised) tempo
     std::optional<Grid>   grid;       // beat grid in nowSec() time
     std::optional<double> intensity;  // 0..1
+    // debug details of the last intensity update
+    std::optional<double> intensitySlow;  // score of the 2 s window
+    std::optional<double> intensityFast;  // score of the 0.5 s window
+    bool fastUsed = false;                // the 0.5 s window drove it
+    double updatedAt = 0;                 // nowSec() of the last update
 };
 
 class BeatWorker {

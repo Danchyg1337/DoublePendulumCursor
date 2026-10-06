@@ -381,7 +381,10 @@ IntensityMeter::IntensityMeter(double updateSec, double memorySec, double fastWi
     : dt_(updateSec), alpha_(updateSec / memorySec), fastWindow_(fastWindowSec),
       attackTau_(attackTau) { reset(); }
 
-void IntensityMeter::reset() { init_ = false; value_.reset(); }
+void IntensityMeter::reset() {
+    init_ = false; value_.reset();
+    lastSlow_.reset(); lastFast_.reset(); fastUsed_ = false;
+}
 
 std::optional<double> IntensityMeter::update(const TempoEstimator& est) {
     const std::size_t L = static_cast<std::size_t>(2.0 * est.fps());
@@ -419,6 +422,9 @@ std::optional<double> IntensityMeter::update(const TempoEstimator& est) {
         init_ = true;
     }
     double target = targetOf(x);
+    lastSlow_ = target;
+    lastFast_.reset();
+    fastUsed_ = false;
     // Fast drop detection: the 2 s average only reaches a drop's level after
     // ~2 s, so also score the last `fastWindow_` seconds and take whichever is
     // higher. Falls still follow the 2 s window (and the slow release).
@@ -426,7 +432,8 @@ std::optional<double> IntensityMeter::update(const TempoEstimator& est) {
     double xs[4];
     if (S > 0 && S < L && window(S, xs)) {
         const double fast = targetOf(xs);
-        if (fast > target + FAST_MARGIN) target = fast;      // a real jump, not jitter
+        lastFast_ = fast;
+        if (fast > target + FAST_MARGIN) { target = fast; fastUsed_ = true; }   // a real jump, not jitter
     }
 
     for (int c = 0; c < 4; ++c) {                            // track statistics: 2 s window

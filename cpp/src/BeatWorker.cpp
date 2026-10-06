@@ -103,6 +103,10 @@ void BeatWorker::step() {
     out_.bpm = tracker_.shown;
     out_.grid = tracker_.grid;
     out_.intensity = intensity;
+    out_.intensitySlow = meter_.lastSlow();
+    out_.intensityFast = meter_.lastFast();
+    out_.fastUsed = meter_.fastUsed();
+    out_.updatedAt = nowSec();
 }
 
 std::optional<Analysis> BeatWorker::analyze() {

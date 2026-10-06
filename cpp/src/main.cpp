@@ -31,6 +31,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -125,10 +127,63 @@ struct BeatDancer {
         : dancer(actorsDir(), cfg::g.GIF_SIZE, cfg::g.SHOW_INTENSITY, cfg::g.HIDE_INTENSITY) {}
 
     // Frame to draw at the cursor's bottom-right this frame, or nullptr.
-    const gif::Image* frame() {
+    // With DEBUG on, also fills `debug` with the text lines to draw.
+    const gif::Image* frame(std::vector<TextLine>* debug) {
         const bpm::BeatState st = worker.state();
-        return dancer.update(bpm::nowSec(), st.bpm, st.grid, st.intensity,
-                             cfg::g.BEAT_OFFSET_MS / 1000.0);
+        const gif::Image* f = dancer.update(bpm::nowSec(), st.bpm, st.grid, st.intensity,
+                                            cfg::g.BEAT_OFFSET_MS / 1000.0);
+        if (debug) debugLines(st, *debug);
+        if (log && st.updatedAt != lastLogged) { writeLog(st); lastLogged = st.updatedAt; }
+        return f;
+    }
+
+    // ---- debug overlay / log --------------------------------------------------
+    std::unique_ptr<std::ofstream> log;
+    double lastLogged = 0, logStart = bpm::nowSec();
+
+    void openLog(const std::string& path) {
+        log = std::make_unique<std::ofstream>(path, std::ios::trunc);
+        if (!*log) { log.reset(); return; }
+        *log << "time_s,bpm,intensity,score_2s,score_05s,fast_used,show\n";
+    }
+
+    static std::string fmt(const std::optional<double>& v) {
+        if (!v) return "--";
+        char b[16];
+        std::snprintf(b, sizeof b, "%.2f", *v);
+        return b;
+    }
+
+    void writeLog(const bpm::BeatState& st) {
+        *log << fmt(st.updatedAt - logStart) << ','
+             << (st.bpm ? std::to_string(*st.bpm) : "") << ','
+             << (st.intensity ? fmt(st.intensity) : "") << ','
+             << (st.intensitySlow ? fmt(st.intensitySlow) : "") << ','
+             << (st.intensityFast ? fmt(st.intensityFast) : "") << ','
+             << (st.fastUsed ? 1 : 0) << ',' << (dancer.showing() ? 1 : 0) << '\n';
+        log->flush();
+    }
+
+    // green -> yellow -> red, like BPMidentifier's intensity colour
+    static cfg::Rgb intensityColor(double x) {
+        x = std::min(1.0, std::max(0.0, x));
+        const double g[3] = {40, 190, 70}, y[3] = {230, 190, 30}, r[3] = {225, 25, 25};
+        const double* a = x < 0.5 ? g : y;
+        const double* b = x < 0.5 ? y : r;
+        const double t = x < 0.5 ? x * 2 : x * 2 - 1;
+        auto c = [&](int i) { return static_cast<unsigned char>(a[i] + (b[i] - a[i]) * t); };
+        return { c(0), c(1), c(2) };
+    }
+
+    void debugLines(const bpm::BeatState& st, std::vector<TextLine>& out) {
+        const cfg::Rgb white{240, 240, 240}, gray{150, 150, 150};
+        out.clear();
+        out.push_back({ "BPM " + (st.bpm ? std::to_string(*st.bpm) : std::string("--")),
+                        st.bpm ? white : gray });
+        out.push_back({ "I " + fmt(st.intensity) + (dancer.showing() ? " SHOW" : ""),
+                        st.intensity ? intensityColor(*st.intensity) : gray });
+        out.push_back({ "S " + fmt(st.intensitySlow) + " F " + fmt(st.intensityFast) +
+                        (st.fastUsed ? "*" : ""), gray });
     }
 };
 
@@ -151,7 +206,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         Renderer renderer;
         AppWindow app(restoreOnce);
         std::unique_ptr<BeatDancer> beat;
-        if (cfg::g.DANCER_ENABLED) beat = std::make_unique<BeatDancer>();
+        if (cfg::g.DANCER_ENABLED) {
+            beat = std::make_unique<BeatDancer>();
+            if (cfg::g.DEBUG_LOG) beat->openLog(narrow(exeDir()) + "debug_log.csv");
+        }
+        std::vector<TextLine> debugText;
 
         // Build one snap mode per configured cursor pose.
         std::vector<SnapMode> modes;
@@ -201,7 +260,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             smoothAx += s.ACCEL_SMOOTHING * (rawAx - smoothAx);
             smoothAy += s.ACCEL_SMOOTHING * (rawAy - smoothAy);
 
-            const gif::Image* gifFrame = beat ? beat->frame() : nullptr;
+            const gif::Image* gifFrame = beat ? beat->frame(cfg::g.DEBUG ? &debugText : nullptr) : nullptr;
+            const std::vector<TextLine>* text = (beat && cfg::g.DEBUG) ? &debugText : nullptr;
 
             const void* current = controller.activeCursorHandle();
             SnapMode* active = nullptr;
@@ -213,7 +273,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 for (auto& m : modes)
                     if (&m != active) m.deactivate();
                 state = active->advance(state, frameDt, subDt);
-                controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame),
+                controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame, text),
                                          active->ocrId());
             } else {
                 for (auto& m : modes) m.deactivate();
@@ -221,7 +281,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 const double gy = s.G - smoothAy;
                 for (int i = 0; i < s.SUBSTEPS; ++i)
                     state = phys::step(state, gx, gy, subDt);
-                controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame),
+                controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame, text),
                                          cfg::OCR_NORMAL);
             }
 

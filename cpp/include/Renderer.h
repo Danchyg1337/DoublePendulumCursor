@@ -9,7 +9,14 @@
 #include "Config.h"
 #include "GifDecoder.h"
 #include <cstdint>
+#include <string>
 #include <vector>
+
+// One line of debug text drawn into the cursor (see DEBUG in pendulum.conf).
+struct TextLine {
+    std::string text;      // digits, space, . - * : and A-Z
+    cfg::Rgb    color;
+};
 
 class Renderer {
 public:
@@ -21,8 +28,10 @@ public:
     // `overlay` (premultiplied RGBA, e.g. the dancing GIF frame) is drawn first
     // with its top-left at tip + (GIF_OFFSET_X, GIF_OFFSET_Y), the pendulum on
     // top of it. The pointer is stable for the life of the Renderer.
+    // `text` (optional) is drawn last, above-right of the pointer tip.
     const std::uint8_t* render(double theta1, double theta2,
-                               const gif::Image* overlay = nullptr);
+                               const gif::Image* overlay = nullptr,
+                               const std::vector<TextLine>* text = nullptr);
 
     int size() const { return n_; }          // canvas edge in pixels
     int stride() const { return n_ * 4; }
@@ -35,6 +44,7 @@ private:
     void drawSegment(double x0, double y0, double x1, double y1,
                      double width, const cfg::Rgb& c);
     void drawOverlay(const gif::Image& im, int x0, int y0);
+    void drawText(const std::string& s, int x0, int y0, int scale, const cfg::Rgb& c);
     void pack();
 
     int                       n_;      // canvas size (square)

@@ -104,6 +104,8 @@ bool loadConfig(const std::string& path, std::string* warnings) {
         else if (key == "MONITOR_HZ")   ok = parseInt(val, g.MONITOR_HZ);
         else if (key == "DANCER_ENABLED") ok = parseInt(val, g.DANCER_ENABLED);
         else if (key == "FAST_DROP")      ok = parseInt(val, g.FAST_DROP);
+        else if (key == "DEBUG")          ok = parseInt(val, g.DEBUG);
+        else if (key == "DEBUG_LOG")      ok = parseInt(val, g.DEBUG_LOG);
         else if (key == "GIF_SIZE")       ok = parseInt(val, g.GIF_SIZE);
         else if (key == "GIF_OFFSET_X")   ok = parseInt(val, g.GIF_OFFSET_X);
         else if (key == "GIF_OFFSET_Y")   ok = parseInt(val, g.GIF_OFFSET_Y);
@@ -188,7 +190,15 @@ std::string defaultConfigText() {
 "SHOW_INTENSITY = 0.70      # 0 calm .. 1 intense: appear at/above this\n"
 "HIDE_INTENSITY = 0.62      # disappear below this (no flicker at the edge)\n"
 "BEAT_OFFSET_MS = 30        # shift the beat later to match audio output latency\n"
-"FAST_DROP = 1              # 1 = show ~0.5 s after a drop; 0 = original BPMidentifier (~2 s)\n";
+"FAST_DROP = 1              # 1 = show ~0.5 s after a drop; 0 = original BPMidentifier (~2 s)\n"
+"\n"
+"# ---- Debug ----\n"
+"# DEBUG = 1 draws next to the cursor, always (even when no GIF shows):\n"
+"#   BPM 128            detected tempo (-- = no beat)\n"
+"#   I 0.72 SHOW        intensity (green..yellow..red); SHOW = GIF allowed\n"
+"#   S 0.65 F 0.81*     2 s score, 0.5 s score; * = the 0.5 s score drove it\n"
+"DEBUG = 0\n"
+"DEBUG_LOG = 0              # 1 = also log those values 4x/s to debug_log.csv\n";
 }
 
 bool writeDefaultConfig(const std::string& path) {
