@@ -80,7 +80,8 @@ struct Settings {
                                       // (closest first); 0 = any tempo
     int    BEAT_LOCK = 1;             // 1 = lock tempo + phase once agreed
     int    MUSIC_GATE = 1;            // 1 = no beat / GIF for speech-only audio
-    int    VOCAL_ROBUST = 1;          // 1 = vocals don't lower the intensity
+    int    INTENSITY_MODE = 2;        // 2 = bass + loudness vs. the track's peak (+tempo)
+                                      // 1 = previous (vocal-robust), 0 = BPMidentifier
     int    DEBUG = 0;                 // 1 = draw BPM + intensity next to the cursor
     int    DEBUG_LOG = 0;             // 1 = also write debug_log.csv next to the exe
 

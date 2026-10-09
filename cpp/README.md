@@ -45,8 +45,20 @@ FAST_DROP = 1          # 1 = appear ~0.5 s after a drop (0 = original, ~2 s)
 MAX_BPM_DIFF = 50      # only GIFs within this many BPM of the music play (0 = any)
 BEAT_LOCK = 1          # lock tempo + phase once found (vocals/fills can't drag it)
 MUSIC_GATE = 1         # speech-only audio (videos, voice chat) never triggers a GIF
-VOCAL_ROBUST = 1       # vocals don't lower the intensity
+INTENSITY_MODE = 2     # 2 = bass + loudness vs. the track's peak (default)
 ```
+
+How intensity is measured (`INTENSITY_MODE = 2`): a drop is where the
+**sub-bass** and the **loudness** are near the track's own peak. Measured on
+the test tracks, drops are 6-14 dB stronger in sub-bass and 5-8 dB louder than
+intros, build-ups and breakdowns, and a voice on top changes neither. Both are
+compared with the track's recent peak (it follows rises at once and decays
+slowly), so a long drop stays at the top instead of sinking the way the
+earlier "relative to the last 60 s" score did; fast tempos get a small bonus.
+Onsets per second were tried as well but don't tell drops apart (quiet parts
+have as many small onsets as drops have big ones). When the app has just
+started, the drop is assumed to be still to come; between songs the previous
+song's peak is kept as the reference.
 
 How the beat is followed (`BEAT_LOCK = 1`): once three readings agree, the
 tempo and beat phase are **locked** and the beat simply runs on. Readings that
@@ -89,8 +101,9 @@ Set `DEBUG = 1` in `pendulum.conf` to always see, above-right of the cursor:
 ```
 BPM 128            detected tempo (-- = no beat yet)
 I 0.72 SHOW        intensity, coloured green..yellow..red; SHOW = GIF allowed
-S 0.65 F 0.81*     score of the 2 s window, of the 0.5 s window;
-                   * = the 0.5 s (FAST_DROP) score drove the value this update
+B 0.95 L 0.90*     bass / loudness vs. the track's peak (1 = at the peak);
+                   * = the fast drop detector (last 0.5 s) drove the value
+                   (INTENSITY_MODE 0/1 show S <2 s score> F <0.5 s score>)
 P 0.03 MUSIC       share of pauses in the last 3 s; VOICE = speech (no GIF)
 ```
 

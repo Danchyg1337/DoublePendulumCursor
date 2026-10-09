@@ -93,6 +93,7 @@ public:
 
     double fps() const { return fps_; }
     double confidence() const { return conf_; }   // beat periodicity of the last estimate()
+    const std::vector<float>& onsetEnvelope() const { return env_; }   // spectral flux per frame
     // per-frame features, see the FEAT_* indices
     const std::vector<std::array<float, FEAT_COUNT>>& features() const { return feat_; }
 
@@ -121,28 +122,64 @@ private:
     double decay_, minSec_, conf_ = 0.0, minConf_ = 0.12;
 };
 
+// ---- energy features ----------------------------------------------------------------
+// What a drop has and a build-up / breakdown / vocal section doesn't: heavy
+// sub-bass and loudness (measured on the 7 test tracks: drops are 6-14 dB
+// stronger in sub-bass and 5-8 dB louder than the rest; a voice on top changes
+// neither). Onsets per second were tried too but don't separate drops: quiet
+// sections have as many small onsets as drops have big ones.
+struct EnergyFeatures {
+    double subDb = -120;      // sub-bass (< 140 Hz) power, dB
+    double loudDb = -120;     // frame level (rms), dB
+    bool valid = false;
+};
+// Mean over the last `windowSec`.
+EnergyFeatures energyFeatures(const TempoEstimator& est, double windowSec);
+
 // ---- intensity ------------------------------------------------------------------
 class IntensityMeter {
 public:
     // fastWindowSec = 0 and attackTau = 0.4 reproduce BPMidentifier exactly;
     // the defaults react to a drop much sooner (see update()).
-    // vocalRobust: score from features that ignore the vocal range, so a
-    // voice on top of the music doesn't lower the intensity.
+    //
+    // Modes:
+    //   Original    : BPMidentifier's features (sub-bass share, flatness,
+    //                 loudness, activity), half absolute, half relative to the
+    //                 last 60 s of the track.
+    //   VocalRobust : the same, but the features ignore the vocal range and a
+    //                 vocal-range level term is added.
+    //   Energy      : what a drop has: sub-bass and loudness relative to the
+    //                 track's recent peak, plus a small tempo bonus. Holds up
+    //                 through a long drop (the 60 s-relative modes decay) and
+    //                 isn't fooled by noisy build-ups or vocals. Default.
+    enum class Mode { Original, VocalRobust, Energy };
     explicit IntensityMeter(double updateSec = 0.25, double memorySec = 60.0,
                             double fastWindowSec = 0.5, double attackTau = 0.15,
-                            bool vocalRobust = true);
+                            Mode mode = Mode::Energy);
     void reset();
-    std::optional<double> update(const TempoEstimator& est);
+    // bpm: the current (locked) tempo, if any -- used by the Energy mode
+    std::optional<double> update(const TempoEstimator& est, std::optional<int> bpm = std::nullopt);
     std::optional<double> value() const { return value_; }
     // Debug: the last update's scores before smoothing -- 2 s window, short
     // (fast-drop) window, and whether the short one was used.
     std::optional<double> lastSlow() const { return lastSlow_; }
     std::optional<double> lastFast() const { return lastFast_; }
     bool fastUsed() const { return fastUsed_; }
+    // Energy mode debug: bass / loudness vs. the track's peak (0..1)
+    std::optional<double> lastBass() const { return lastBass_; }
+    std::optional<double> lastLoud() const { return lastLoud_; }
 private:
+    std::optional<double> updateEnergy(const TempoEstimator& est, std::optional<int> bpm);
+    void smooth(double target);
+
     double dt_, alpha_, fastWindow_, attackTau_;
+    Mode mode_;
     bool vocalRobust_;
-    std::optional<double> lastSlow_, lastFast_;
+    // Energy mode: decaying peaks of the 2 s sub-bass / loudness levels (dB)
+    std::optional<double> subRef_, loudRef_;
+    double silentFor_ = 0;
+    bool startPhase_ = false;   // no peak reached yet since the app started
+    std::optional<double> lastSlow_, lastFast_, lastBass_, lastLoud_;
     bool fastUsed_ = false;
     bool   init_ = false;
     std::array<double, 5> mu_{}, var_{};

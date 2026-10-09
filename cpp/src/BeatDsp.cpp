@@ -449,6 +449,22 @@ std::pair<double, double> TempoEstimator::subdivision(double periodSec, double l
     return {binary, ternary};
 }
 
+EnergyFeatures energyFeatures(const TempoEstimator& est, double windowSec) {
+    EnergyFeatures out;
+    const auto& F = est.features();
+    const auto& env = est.onsetEnvelope();
+    const std::size_t W = static_cast<std::size_t>(windowSec * est.fps());
+    if (W == 0 || F.size() < W || env.size() < W) return out;
+    double sub = 0, rms = 0;
+    for (std::size_t i = F.size() - W; i < F.size(); ++i) { sub += F[i][FEAT_SUB_POW]; rms += F[i][FEAT_RMS]; }
+    sub /= W; rms /= W;
+    if (rms < 1e-3) return out;
+    out.subDb = 10 * std::log10(sub + 1e-12);
+    out.loudDb = 20 * std::log10(rms + 1e-9);
+    out.valid = true;
+    return out;
+}
+
 // ---- IntensityMeter ---------------------------------------------------------
 namespace {
 // sub, flat, loud, act, + vocal-range level (vocal-robust mode only: a voice
@@ -459,16 +475,95 @@ constexpr double FAST_MARGIN = 0.10;   // short window must beat the 2 s one by 
 } // namespace
 
 IntensityMeter::IntensityMeter(double updateSec, double memorySec, double fastWindowSec,
-                               double attackTau, bool vocalRobust)
+                               double attackTau, Mode mode)
     : dt_(updateSec), alpha_(updateSec / memorySec), fastWindow_(fastWindowSec),
-      attackTau_(attackTau), vocalRobust_(vocalRobust) { reset(); }
+      attackTau_(attackTau), mode_(mode), vocalRobust_(mode != Mode::Original) { reset(); }
+
+// ---- Energy mode ----
+// bass  : sub-bass level vs. the track's recent peak (full within 0 dB,
+//         zero BASS_RANGE dB below)
+// loud  : loudness vs. its recent peak, same idea
+// tempo : a small bonus for fast music
+// The peaks follow rises at once and decay slowly (PEAK_DECAY dB/s), so a
+// long drop stays at the top while a quieter next song is adopted within a
+// minute or so. With no history (app just started) the drop is assumed to be
+// still to come: the reference starts START_HEADROOM above the first level
+// and shrinks at START_DECAY until the music reaches it. Between songs the
+// previous song's peak is kept (decaying faster during the silence) --
+// streaming services level-match songs, so it's a good guess for the next.
+// (tuned on 7 tracks against "drop" labels: bass + loudness near the max)
+namespace {
+constexpr double BASS_RANGE = 10.0;                    // dB below the peak -> 0
+constexpr double LOUD_RANGE = 7.0;
+constexpr double W_BASS = 0.55, W_LOUD = 0.30, W_TEMPO = 0.15;
+constexpr double PEAK_DECAY = 0.05;                    // dB per second
+constexpr double START_HEADROOM = 10.0;                // dB above the first level
+constexpr double START_DECAY = 0.30;                   // dB/s until the music reaches it
+constexpr double SILENCE_DECAY = 0.5;                  // dB/s while nothing plays
+double clamp01(double x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
+} // namespace
+
+std::optional<double> IntensityMeter::updateEnergy(const TempoEstimator& est, std::optional<int> bpm) {
+    const EnergyFeatures e = energyFeatures(est, 2.0);
+    if (!e.valid) {                                        // silence / too little audio
+        silentFor_ += dt_;
+        if (subRef_) { *subRef_ -= SILENCE_DECAY * dt_; *loudRef_ -= SILENCE_DECAY * dt_; }
+        if (value_) smooth(0.0);       // fade out between songs (no carry-over blip)
+        return value_;
+    }
+    silentFor_ = 0;
+    if (!subRef_) {                                        // no history yet
+        subRef_ = e.subDb + START_HEADROOM;
+        loudRef_ = e.loudDb + START_HEADROOM * LOUD_RANGE / BASS_RANGE;
+        startPhase_ = true;
+    } else {
+        if (startPhase_ && (e.subDb >= *subRef_ - 1.0 || e.loudDb >= *loudRef_ - 1.0))
+            startPhase_ = false;                           // the music got there
+        const double decay = (startPhase_ ? START_DECAY : PEAK_DECAY) * dt_;
+        subRef_ = std::max(e.subDb, *subRef_ - decay);
+        loudRef_ = std::max(e.loudDb, *loudRef_ - decay);
+    }
+    const double tempo = bpm ? clamp01((*bpm - 70.0) / 100.0) : 0.3;
+    auto score = [&](const EnergyFeatures& f) {
+        const double bass = clamp01((f.subDb - *subRef_ + BASS_RANGE) / BASS_RANGE);
+        const double loud = clamp01((f.loudDb - *loudRef_ + LOUD_RANGE) / LOUD_RANGE);
+        return W_BASS * bass + W_LOUD * loud + W_TEMPO * tempo;
+    };
+    double target = score(e);
+    lastSlow_ = target;
+    lastBass_ = clamp01((e.subDb - *subRef_ + BASS_RANGE) / BASS_RANGE);
+    lastLoud_ = clamp01((e.loudDb - *loudRef_ + LOUD_RANGE) / LOUD_RANGE);
+    lastFast_.reset();
+    fastUsed_ = false;
+    if (fastWindow_ > 0) {
+        const EnergyFeatures f = energyFeatures(est, fastWindow_);
+        if (f.valid) {
+            const double fast = score(f);
+            lastFast_ = fast;
+            if (fast > target + FAST_MARGIN) { target = fast; fastUsed_ = true; }
+        }
+    }
+    smooth(target);
+    return value_;
+}
+
+void IntensityMeter::smooth(double target) {
+    if (!value_) {
+        value_ = target;
+    } else {
+        const double tau = target > *value_ ? attackTau_ : 1.5;   // fast up, slow down
+        *value_ += (target - *value_) * (1 - std::exp(-dt_ / tau));
+    }
+}
 
 void IntensityMeter::reset() {
     init_ = false; value_.reset();
+    subRef_.reset(); loudRef_.reset(); silentFor_ = 0; startPhase_ = false;
     lastSlow_.reset(); lastFast_.reset(); fastUsed_ = false;
 }
 
-std::optional<double> IntensityMeter::update(const TempoEstimator& est) {
+std::optional<double> IntensityMeter::update(const TempoEstimator& est, std::optional<int> bpm) {
+    if (mode_ == Mode::Energy) return updateEnergy(est, bpm);
     const std::size_t L = static_cast<std::size_t>(2.0 * est.fps());
     const auto& feat = est.features();
     if (feat.size() < L || L == 0) return value_;

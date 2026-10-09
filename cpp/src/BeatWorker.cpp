@@ -75,7 +75,10 @@ std::optional<double> AudioRing::sampleTime(double sampleIndex) const {
 BeatWorker::BeatWorker(AudioRing& ring, const Options& opt)
     : ring_(ring), opt_(opt), tracker_(3, OCT_ENTER_V2, OCT_EXIT_V2, true),
       lock_(LOCK_OCT_ENTER, LOCK_OCT_EXIT, true),
-      meter_(UPDATE_SEC, 60.0, opt.fastDrop ? 0.5 : 0.0, opt.fastDrop ? 0.15 : 0.4, opt.vocalRobust) {}
+      meter_(UPDATE_SEC, 60.0, opt.fastDrop ? 0.5 : 0.0, opt.fastDrop ? 0.15 : 0.4,
+             opt.intensityMode <= 0 ? IntensityMeter::Mode::Original
+             : opt.intensityMode == 1 ? IntensityMeter::Mode::VocalRobust
+                                      : IntensityMeter::Mode::Energy) {}
 
 BeatState BeatWorker::state() const {
     std::lock_guard<std::mutex> lk(outM_);
@@ -119,7 +122,7 @@ void BeatWorker::step() {
         shownBpm = tracker_.shown;
         grid = tracker_.grid;
     }
-    const auto intensity = meter_.update(*est_);
+    const auto intensity = meter_.update(*est_, shownBpm);
 
     std::lock_guard<std::mutex> lk(outM_);
     out_.bpm = shownBpm;
@@ -131,6 +134,8 @@ void BeatWorker::step() {
     out_.intensitySlow = meter_.lastSlow();
     out_.intensityFast = meter_.lastFast();
     out_.fastUsed = meter_.fastUsed();
+    out_.intensityBass = meter_.lastBass();
+    out_.intensityLoud = meter_.lastLoud();
     out_.updatedAt = nowSec();
 }
 

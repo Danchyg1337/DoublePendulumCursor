@@ -107,7 +107,8 @@ bool loadConfig(const std::string& path, std::string* warnings) {
         else if (key == "FAST_DROP")      ok = parseInt(val, g.FAST_DROP);
         else if (key == "BEAT_LOCK")      ok = parseInt(val, g.BEAT_LOCK);
         else if (key == "MUSIC_GATE")     ok = parseInt(val, g.MUSIC_GATE);
-        else if (key == "VOCAL_ROBUST")   ok = parseInt(val, g.VOCAL_ROBUST);
+        else if (key == "INTENSITY_MODE") ok = parseInt(val, g.INTENSITY_MODE);
+        else if (key == "VOCAL_ROBUST")   ok = true;   // replaced by INTENSITY_MODE
         else if (key == "DEBUG")          ok = parseInt(val, g.DEBUG);
         else if (key == "DEBUG_LOG")      ok = parseInt(val, g.DEBUG_LOG);
         else if (key == "GIF_SIZE")       ok = parseInt(val, g.GIF_SIZE);
@@ -200,13 +201,17 @@ std::string defaultConfigText() {
 "                           # first (0 = any). GIFs are managed in tray -> Actors...\n"
 "BEAT_LOCK = 1              # 1 = once the beat is found, lock it (vocals/fills can't drag it)\n"
 "MUSIC_GATE = 1             # 1 = speech-only audio (videos, voice chat) never triggers a GIF\n"
-"VOCAL_ROBUST = 1           # 1 = vocals don't lower the intensity\n"
+"INTENSITY_MODE = 2         # how intensity is measured: 2 = sub-bass + loudness vs. the\n"
+"                           # track's own peak (+ small bonus for fast tempo),\n"
+"                           # 1 = previous version, 0 = original BPMidentifier\n"
 "\n"
 "# ---- Debug ----\n"
 "# DEBUG = 1 draws next to the cursor, always (even when no GIF shows):\n"
 "#   BPM 128            detected tempo (-- = no beat)\n"
 "#   I 0.72 SHOW        intensity (green..yellow..red); SHOW = GIF allowed\n"
-"#   S 0.65 F 0.81*     2 s score, 0.5 s score; * = the 0.5 s score drove it\n"
+"#   B 0.95 L 0.90*     bass / loudness vs. the track's peak (INTENSITY_MODE 2);\n"
+"#                      * = the fast drop detector (last 0.5 s) drove it\n"
+"#                      (modes 0/1 show S <2 s score> F <0.5 s score> instead)\n"
 "#   P 0.03 MUSIC       share of pauses in the last 3 s; VOICE = speech, no GIF\n"
 "DEBUG = 0\n"
 "DEBUG_LOG = 0              # 1 = also log those values 4x/s to debug_log.csv\n";

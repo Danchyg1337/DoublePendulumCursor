@@ -61,6 +61,8 @@ struct BeatState {
     std::optional<double> intensitySlow;  // score of the 2 s window
     std::optional<double> intensityFast;  // score of the 0.5 s window
     bool fastUsed = false;                // the 0.5 s window drove it
+    std::optional<double> intensityBass;  // energy mode: bass vs. track peak
+    std::optional<double> intensityLoud;  // energy mode: loudness vs. track peak
     bool music = true;                    // MusicGate verdict
     std::optional<double> musicScore;     // smoothed pause share (speech ~0.3)
     std::optional<double> rawBpm;         // this update's raw estimate
@@ -73,7 +75,9 @@ public:
 
     struct Options {
         bool fastDrop = true;      // intensity reacts to drops in ~0.5 s
-        bool vocalRobust = true;   // vocals don't lower the intensity
+        // 0 = BPMidentifier original, 1 = vocal-robust, 2 = energy (bass +
+        // loudness vs. the track's peak, tempo bonus) -- see IntensityMeter
+        int intensityMode = 2;
         bool beatLock = true;      // lock tempo + phase once agreed
         bool musicGate = true;     // no beat / GIF for speech-only audio
     };

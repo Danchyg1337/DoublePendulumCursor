@@ -121,7 +121,7 @@ std::string actorsDir() {
 bpm::BeatWorker::Options workerOptions() {
     bpm::BeatWorker::Options o;
     o.fastDrop = cfg::g.FAST_DROP != 0;
-    o.vocalRobust = cfg::g.VOCAL_ROBUST != 0;
+    o.intensityMode = cfg::g.INTENSITY_MODE;
     o.beatLock = cfg::g.BEAT_LOCK != 0;
     o.musicGate = cfg::g.MUSIC_GATE != 0;
     return o;
@@ -170,7 +170,7 @@ struct BeatDancer {
     void openLog(const std::string& path) {
         log = std::make_unique<std::ofstream>(path, std::ios::trunc);
         if (!*log) { log.reset(); return; }
-        *log << "time_s,bpm,raw_bpm,intensity,score_2s,score_05s,fast_used,show,music,pause_share\n";
+        *log << "time_s,bpm,raw_bpm,intensity,score_2s,score_05s,fast_used,show,music,pause_share,bass,loud\n";
     }
 
     static std::string fmt(const std::optional<double>& v) {
@@ -188,7 +188,9 @@ struct BeatDancer {
              << (st.intensitySlow ? fmt(st.intensitySlow) : "") << ','
              << (st.intensityFast ? fmt(st.intensityFast) : "") << ','
              << (st.fastUsed ? 1 : 0) << ',' << (dancer->showing() ? 1 : 0) << ','
-             << (st.music ? 1 : 0) << ',' << (st.musicScore ? fmt(st.musicScore) : "") << '\n';
+             << (st.music ? 1 : 0) << ',' << (st.musicScore ? fmt(st.musicScore) : "") << ','
+             << (st.intensityBass ? fmt(st.intensityBass) : "") << ','
+             << (st.intensityLoud ? fmt(st.intensityLoud) : "") << '\n';
         log->flush();
     }
 
@@ -210,8 +212,12 @@ struct BeatDancer {
                         st.bpm ? white : gray });
         out.push_back({ "I " + fmt(st.intensity) + (dancer->showing() ? " SHOW" : ""),
                         st.intensity ? intensityColor(*st.intensity) : gray });
-        out.push_back({ "S " + fmt(st.intensitySlow) + " F " + fmt(st.intensityFast) +
-                        (st.fastUsed ? "*" : ""), gray });
+        if (st.intensityBass)   // energy mode: what the intensity is made of
+            out.push_back({ "B " + fmt(st.intensityBass) + " L " + fmt(st.intensityLoud) +
+                            (st.fastUsed ? "*" : ""), gray });
+        else
+            out.push_back({ "S " + fmt(st.intensitySlow) + " F " + fmt(st.intensityFast) +
+                            (st.fastUsed ? "*" : ""), gray });
         // music gate: pause share of the last 3 s (speech ~0.3, music ~0)
         out.push_back({ "P " + fmt(st.musicScore) + (st.music ? " MUSIC" : " VOICE"),
                         st.music ? gray : cfg::Rgb{230, 150, 40} });
