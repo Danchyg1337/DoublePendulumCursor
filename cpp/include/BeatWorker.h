@@ -61,6 +61,9 @@ struct BeatState {
     std::optional<double> intensitySlow;  // score of the 2 s window
     std::optional<double> intensityFast;  // score of the 0.5 s window
     bool fastUsed = false;                // the 0.5 s window drove it
+    bool music = true;                    // MusicGate verdict
+    std::optional<double> musicScore;     // smoothed pause share (speech ~0.3)
+    std::optional<double> rawBpm;         // this update's raw estimate
     double updatedAt = 0;                 // nowSec() of the last update
 };
 
@@ -68,8 +71,14 @@ class BeatWorker {
 public:
     static constexpr double UPDATE_SEC = 0.25;
 
-    // fastDrop = false -> intensity exactly as BPMidentifier (slower on drops)
-    explicit BeatWorker(AudioRing& ring, bool fastDrop = true);
+    struct Options {
+        bool fastDrop = true;      // intensity reacts to drops in ~0.5 s
+        bool vocalRobust = true;   // vocals don't lower the intensity
+        bool beatLock = true;      // lock tempo + phase once agreed
+        bool musicGate = true;     // no beat / GIF for speech-only audio
+    };
+    explicit BeatWorker(AudioRing& ring) : BeatWorker(ring, Options{}) {}
+    BeatWorker(AudioRing& ring, const Options& opt);
     // One analysis update (the body of ClassicWorker.run's loop).
     void step();
     BeatState state() const;
@@ -82,7 +91,10 @@ private:
     std::vector<double> snareEnvelope(double sec, std::int64_t& startSample);
 
     AudioRing& ring_;
+    Options opt_;
     Tracker tracker_;
+    BeatLock lock_;
+    MusicGate gate_;
     IntensityMeter meter_;
     std::unique_ptr<TempoEstimator> est_;
     int gen_ = -1;

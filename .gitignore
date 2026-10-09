@@ -24,3 +24,6 @@ frame.png
 # Resource build output
 app.res
 ._cursors_test.conf
+
+# Test tracks (local only, not for the repo)
+cpp/test/audio/

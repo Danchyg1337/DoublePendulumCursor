@@ -11,6 +11,7 @@
 // it and restore the normal cursor. Tunables are read from pendulum.conf and
 // per-cursor snap poses from cursors.conf at startup (both created next to the
 // exe on first run if missing).
+#include "ActorsWindow.h"
 #include "AppWindow.h"
 #include "BeatWorker.h"
 #include "Dancer.h"
@@ -117,24 +118,46 @@ std::string actorsDir() {
     return absolute ? d : narrow(exeDir()) + d;
 }
 
+bpm::BeatWorker::Options workerOptions() {
+    bpm::BeatWorker::Options o;
+    o.fastDrop = cfg::g.FAST_DROP != 0;
+    o.vocalRobust = cfg::g.VOCAL_ROBUST != 0;
+    o.beatLock = cfg::g.BEAT_LOCK != 0;
+    o.musicGate = cfg::g.MUSIC_GATE != 0;
+    return o;
+}
+
 // Audio capture -> beat analysis -> GIF dancer. Members are declared in
 // dependency order so destruction stops the threads before their data goes.
 struct BeatDancer {
     bpm::AudioRing   ring;
-    bpm::BeatWorker  worker{ring, cfg::g.FAST_DROP != 0};
+    bpm::BeatWorker  worker{ring, workerOptions()};
     LoopbackCapture  capture{ring};
     BeatThread       analysis{worker};
-    dancer::Dancer   dancer;
+    // shared with the Actors window, which may hold on to it while it closes
+    std::shared_ptr<dancer::Dancer> dancer;
+    bpm::BeatState   last;
 
-    BeatDancer()
-        : dancer(actorsDir(), cfg::g.GIF_SIZE, cfg::g.SHOW_INTENSITY, cfg::g.HIDE_INTENSITY) {}
+    BeatDancer() { reloadActors(); }
+
+    // (Re)load the GIFs from the actors folder (decoded in the background).
+    void reloadActors() {
+        const std::string dir = actorsDir();
+        dancer = std::make_shared<dancer::Dancer>(dir, cfg::g.GIF_SIZE, cfg::g.SHOW_INTENSITY,
+                                                  cfg::g.HIDE_INTENSITY, cfg::g.MAX_BPM_DIFF,
+                                                  dancer::loadDisabledList(dir));
+    }
 
     // Frame to draw at the cursor's bottom-right this frame, or nullptr.
     // With DEBUG on, also fills `debug` with the text lines to draw.
     const gif::Image* frame(std::vector<TextLine>* debug) {
         const bpm::BeatState st = worker.state();
-        const gif::Image* f = dancer.update(bpm::nowSec(), st.bpm, st.grid, st.intensity,
-                                            cfg::g.BEAT_OFFSET_MS / 1000.0);
+        last = st;
+        // the GIF only plays to music (speech-only audio never triggers it)
+        const bool music = st.music;
+        const gif::Image* f = dancer->update(bpm::nowSec(), music ? st.bpm : std::nullopt,
+                                             music ? st.grid : std::nullopt, st.intensity,
+                                             cfg::g.BEAT_OFFSET_MS / 1000.0);
         if (debug) debugLines(st, *debug);
         if (log && st.updatedAt != lastLogged) { writeLog(st); lastLogged = st.updatedAt; }
         return f;
@@ -147,7 +170,7 @@ struct BeatDancer {
     void openLog(const std::string& path) {
         log = std::make_unique<std::ofstream>(path, std::ios::trunc);
         if (!*log) { log.reset(); return; }
-        *log << "time_s,bpm,intensity,score_2s,score_05s,fast_used,show\n";
+        *log << "time_s,bpm,raw_bpm,intensity,score_2s,score_05s,fast_used,show,music,pause_share\n";
     }
 
     static std::string fmt(const std::optional<double>& v) {
@@ -160,10 +183,12 @@ struct BeatDancer {
     void writeLog(const bpm::BeatState& st) {
         *log << fmt(st.updatedAt - logStart) << ','
              << (st.bpm ? std::to_string(*st.bpm) : "") << ','
+             << (st.rawBpm ? fmt(st.rawBpm) : "") << ','
              << (st.intensity ? fmt(st.intensity) : "") << ','
              << (st.intensitySlow ? fmt(st.intensitySlow) : "") << ','
              << (st.intensityFast ? fmt(st.intensityFast) : "") << ','
-             << (st.fastUsed ? 1 : 0) << ',' << (dancer.showing() ? 1 : 0) << '\n';
+             << (st.fastUsed ? 1 : 0) << ',' << (dancer->showing() ? 1 : 0) << ','
+             << (st.music ? 1 : 0) << ',' << (st.musicScore ? fmt(st.musicScore) : "") << '\n';
         log->flush();
     }
 
@@ -183,19 +208,127 @@ struct BeatDancer {
         out.clear();
         out.push_back({ "BPM " + (st.bpm ? std::to_string(*st.bpm) : std::string("--")),
                         st.bpm ? white : gray });
-        out.push_back({ "I " + fmt(st.intensity) + (dancer.showing() ? " SHOW" : ""),
+        out.push_back({ "I " + fmt(st.intensity) + (dancer->showing() ? " SHOW" : ""),
                         st.intensity ? intensityColor(*st.intensity) : gray });
         out.push_back({ "S " + fmt(st.intensitySlow) + " F " + fmt(st.intensityFast) +
                         (st.fastUsed ? "*" : ""), gray });
+        // music gate: pause share of the last 3 s (speech ~0.3, music ~0)
+        out.push_back({ "P " + fmt(st.musicScore) + (st.music ? " MUSIC" : " VOICE"),
+                        st.music ? gray : cfg::Rgb{230, 150, 40} });
     }
 };
+
+// One run of the cursor with the current configuration. Returns when the user
+// quits, or when Refresh was chosen (then the caller reloads everything).
+void runSession(AppWindow& app, ActorsBridge& bridge, const bool& refresh) {
+    const std::vector<cursors::Pose> poses = loadCursorPoses();
+    CursorController controller;
+    Renderer renderer;
+    std::unique_ptr<BeatDancer> beat;
+    if (cfg::g.DANCER_ENABLED) {
+        beat = std::make_unique<BeatDancer>();
+        if (cfg::g.DEBUG_LOG) beat->openLog(narrow(exeDir()) + "debug_log.csv");
+    }
+    std::vector<TextLine> debugText;
+
+    // Build one snap mode per configured cursor pose.
+    std::vector<SnapMode> modes;
+    modes.reserve(poses.size());
+    for (const auto& p : poses)
+        modes.emplace_back(p.name, p.ocrId, p.theta1, p.theta2);
+    for (auto& m : modes)
+        m.setSlotHandle(controller.loadSlotHandle(m.ocrId()));
+
+    const cfg::Settings& s = cfg::g;
+    phys::State state;
+    state.theta1 = cfg::PI / 2.0;  // start hanging out to the side
+    state.theta2 = cfg::PI / 2.0;
+
+    const int detected = (s.MONITOR_HZ > 0) ? s.MONITOR_HZ
+                                            : CursorController::refreshRateHz();
+    const int targetFps = detected < s.FPS_CAP ? detected : s.FPS_CAP;
+    const double frameDt = 1.0 / targetFps;
+    const double subDt   = frameDt / s.SUBSTEPS;
+
+    // Prime every slot so none flashes Windows' default image.
+    {
+        const std::uint8_t* px = renderer.render(state.theta1, state.theta2);
+        controller.installCursor(px, cfg::OCR_NORMAL);
+        for (auto& m : modes) controller.installCursor(px, m.ocrId());
+    }
+
+    long prevX, prevY;
+    CursorController::cursorPos(prevX, prevY);
+    double prevVelX = 0.0, prevVelY = 0.0;
+    double smoothAx = 0.0, smoothAy = 0.0;
+
+    using clock = std::chrono::steady_clock;
+    const std::string dir = actorsDir();
+
+    while (app.pump() && !refresh) {
+        const auto t0 = clock::now();
+
+        // Actors window: apply its requests, tell it what's going on
+        if (auto disabled = bridge.takeDisabled()) {
+            dancer::saveDisabledList(dir, *disabled);
+            if (beat) beat->dancer->setDisabled(std::move(*disabled));
+        }
+        if (bridge.takeReload() && beat) beat->reloadActors();
+        bridge.publish(beat ? beat->dancer : nullptr, beat ? beat->last.bpm : std::nullopt,
+                       s.MAX_BPM_DIFF, dir);
+
+        long posX, posY;
+        CursorController::cursorPos(posX, posY);
+        const double velX = (posX - prevX) / frameDt;
+        const double velY = (posY - prevY) / frameDt;
+        double rawAx = (velX - prevVelX) / frameDt;
+        double rawAy = (velY - prevVelY) / frameDt;
+
+        rawAx = rawAx < -s.MAX_ACCEL ? -s.MAX_ACCEL : (rawAx > s.MAX_ACCEL ? s.MAX_ACCEL : rawAx);
+        rawAy = rawAy < -s.MAX_ACCEL ? -s.MAX_ACCEL : (rawAy > s.MAX_ACCEL ? s.MAX_ACCEL : rawAy);
+        smoothAx += s.ACCEL_SMOOTHING * (rawAx - smoothAx);
+        smoothAy += s.ACCEL_SMOOTHING * (rawAy - smoothAy);
+
+        const gif::Image* gifFrame = beat ? beat->frame(s.DEBUG ? &debugText : nullptr) : nullptr;
+        const std::vector<TextLine>* text = (beat && s.DEBUG) ? &debugText : nullptr;
+
+        const void* current = controller.activeCursorHandle();
+        SnapMode* active = nullptr;
+        for (auto& m : modes) {
+            if (m.isActive(current)) { active = &m; break; }
+        }
+
+        if (active) {
+            for (auto& m : modes)
+                if (&m != active) m.deactivate();
+            state = active->advance(state, frameDt, subDt);
+            controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame, text),
+                                     active->ocrId());
+        } else {
+            for (auto& m : modes) m.deactivate();
+            const double gx = -smoothAx;
+            const double gy = s.G - smoothAy;
+            for (int i = 0; i < s.SUBSTEPS; ++i)
+                state = phys::step(state, gx, gy, subDt);
+            controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame, text),
+                                     cfg::OCR_NORMAL);
+        }
+
+        prevX = posX; prevY = posY;
+        prevVelX = velX; prevVelY = velY;
+
+        const auto elapsed = std::chrono::duration<double>(clock::now() - t0).count();
+        const double remaining = frameDt - elapsed;
+        if (remaining > 0.0)
+            std::this_thread::sleep_for(std::chrono::duration<double>(remaining));
+    }
+    bridge.publish(nullptr, std::nullopt, s.MAX_BPM_DIFF, dir);   // let go of the dancer
+}
 
 } // namespace
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     std::atexit(restoreOnce);
-    loadConfiguration();
-    const std::vector<cursors::Pose> poses = loadCursorPoses();
 
     // A logon scheduled task (or Startup-folder launch) can start us below
     // normal priority; force normal so cursor updates stay smooth.
@@ -205,96 +338,20 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     timeBeginPeriod(1);
 
     try {
-        CursorController controller;
-        Renderer renderer;
         AppWindow app(restoreOnce);
-        std::unique_ptr<BeatDancer> beat;
-        if (cfg::g.DANCER_ENABLED) {
-            beat = std::make_unique<BeatDancer>();
-            if (cfg::g.DEBUG_LOG) beat->openLog(narrow(exeDir()) + "debug_log.csv");
-        }
-        std::vector<TextLine> debugText;
+        ActorsBridge bridge;
+        ActorsWindow actorsWindow(bridge);
+        bool refresh = false;
+        app.setOnRefresh([&] { refresh = true; });
+        app.setOnActors([&] { actorsWindow.show(); });
 
-        // Build one snap mode per configured cursor pose.
-        std::vector<SnapMode> modes;
-        modes.reserve(poses.size());
-        for (const auto& p : poses)
-            modes.emplace_back(p.name, p.ocrId, p.theta1, p.theta2);
-        for (auto& m : modes)
-            m.setSlotHandle(controller.loadSlotHandle(m.ocrId()));
-
-        const cfg::Settings& s = cfg::g;
-        phys::State state;
-        state.theta1 = cfg::PI / 2.0;  // start hanging out to the side
-        state.theta2 = cfg::PI / 2.0;
-
-        const int detected = (s.MONITOR_HZ > 0) ? s.MONITOR_HZ
-                                                : CursorController::refreshRateHz();
-        const int targetFps = detected < s.FPS_CAP ? detected : s.FPS_CAP;
-        const double frameDt = 1.0 / targetFps;
-        const double subDt   = frameDt / s.SUBSTEPS;
-
-        // Prime every slot so none flashes Windows' default image.
-        {
-            const std::uint8_t* px = renderer.render(state.theta1, state.theta2);
-            controller.installCursor(px, cfg::OCR_NORMAL);
-            for (auto& m : modes) controller.installCursor(px, m.ocrId());
-        }
-
-        long prevX, prevY;
-        CursorController::cursorPos(prevX, prevY);
-        double prevVelX = 0.0, prevVelY = 0.0;
-        double smoothAx = 0.0, smoothAy = 0.0;
-
-        using clock = std::chrono::steady_clock;
-
-        while (app.pump()) {
-            const auto t0 = clock::now();
-
-            long posX, posY;
-            CursorController::cursorPos(posX, posY);
-            const double velX = (posX - prevX) / frameDt;
-            const double velY = (posY - prevY) / frameDt;
-            double rawAx = (velX - prevVelX) / frameDt;
-            double rawAy = (velY - prevVelY) / frameDt;
-
-            rawAx = rawAx < -s.MAX_ACCEL ? -s.MAX_ACCEL : (rawAx > s.MAX_ACCEL ? s.MAX_ACCEL : rawAx);
-            rawAy = rawAy < -s.MAX_ACCEL ? -s.MAX_ACCEL : (rawAy > s.MAX_ACCEL ? s.MAX_ACCEL : rawAy);
-            smoothAx += s.ACCEL_SMOOTHING * (rawAx - smoothAx);
-            smoothAy += s.ACCEL_SMOOTHING * (rawAy - smoothAy);
-
-            const gif::Image* gifFrame = beat ? beat->frame(cfg::g.DEBUG ? &debugText : nullptr) : nullptr;
-            const std::vector<TextLine>* text = (beat && cfg::g.DEBUG) ? &debugText : nullptr;
-
-            const void* current = controller.activeCursorHandle();
-            SnapMode* active = nullptr;
-            for (auto& m : modes) {
-                if (m.isActive(current)) { active = &m; break; }
-            }
-
-            if (active) {
-                for (auto& m : modes)
-                    if (&m != active) m.deactivate();
-                state = active->advance(state, frameDt, subDt);
-                controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame, text),
-                                         active->ocrId());
-            } else {
-                for (auto& m : modes) m.deactivate();
-                const double gx = -smoothAx;
-                const double gy = s.G - smoothAy;
-                for (int i = 0; i < s.SUBSTEPS; ++i)
-                    state = phys::step(state, gx, gy, subDt);
-                controller.installCursor(renderer.render(state.theta1, state.theta2, gifFrame, text),
-                                         cfg::OCR_NORMAL);
-            }
-
-            prevX = posX; prevY = posY;
-            prevVelX = velX; prevVelY = velY;
-
-            const auto elapsed = std::chrono::duration<double>(clock::now() - t0).count();
-            const double remaining = frameDt - elapsed;
-            if (remaining > 0.0)
-                std::this_thread::sleep_for(std::chrono::duration<double>(remaining));
+        // Tray -> Refresh: tear everything down and start again from the
+        // config files, as if the app had been restarted (tray icon stays).
+        while (!app.quitRequested()) {
+            refresh = false;
+            cfg::g = cfg::Settings{};
+            loadConfiguration();
+            runSession(app, bridge, refresh);
         }
     } catch (const std::exception& e) {
         restoreOnce();

@@ -25,6 +25,9 @@ const char* glyph(char ch) {
         case '*': return "     # # # ### ##### ### # # #     ";
         case 'A': return " ### #   ##   #######   ##   ##   #";
         case 'B': return "#### #   ##   ##### #   ##   ##### ";
+        case 'C': return " ### #   ##    #    #    #   # ### ";
+        case 'U': return "#   ##   ##   ##   ##   ##   # ### ";
+        case 'V': return "#   ##   ##   ##   ##   # # #   #  ";
         case 'D': return "#### #   ##   ##   ##   ##   ##### ";
         case 'E': return "######    #    #### #    #    #####";
         case 'F': return "######    #    #### #    #    #    ";

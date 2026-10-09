@@ -45,6 +45,23 @@ private:
 // Hann window as np.hanning(n).
 std::vector<double> hanning(int n);
 
+// Per-frame features (TempoEstimator::features()). The *_NV versions ignore
+// the vocal range (150 Hz .. 5 kHz), so a voice on top of the music doesn't
+// dilute them.
+enum {
+    FEAT_SUB = 0,     // sub-bass (< 140 Hz) share of the power
+    FEAT_FLAT,        // spectral flatness (noisy / dense mix -> high)
+    FEAT_RMS,         // frame level
+    FEAT_ACT,         // level-independent onset activity
+    FEAT_SUB_NV,
+    FEAT_FLAT_NV,
+    FEAT_ACT_NV,
+    FEAT_SUB_POW,     // sub-bass power (absolute)
+    FEAT_POW,         // power outside the vocal range (absolute)
+    FEAT_MID_POW,     // power inside the vocal range (absolute)
+    FEAT_COUNT
+};
+
 // ---- tempo estimator ----------------------------------------------------------
 struct Estimate {
     std::optional<double> bpm;
@@ -64,9 +81,20 @@ public:
     // Absolute sample index of the most recent beat, or nullopt.
     std::optional<double> beatPhase(double periodSec, double lookbackSec = 4.0) const;
 
+    // How sharply the onsets line up with a beat grid of this period (best
+    // phase vs. average phase, in units of the onset envelope's std). A wrong
+    // metrical level (e.g. 2/3 of the true tempo) puts half its beats between
+    // hits and scores low.
+    double pulseContrast(double periodSec, double lookbackSec = 6.0) const;
+    // Fold the onsets at this beat period into a 24-bin phase histogram
+    // (rotated so the strongest bin is 0). Returns {binary, ternary}: the
+    // onset strength halfway between beats vs. at 1/3 and 2/3 of the beat.
+    std::pair<double, double> subdivision(double periodSec, double lookbackSec = 6.0) const;
+
     double fps() const { return fps_; }
-    // per-frame features: sub-bass share, flatness, rms, activity
-    const std::vector<std::array<float, 4>>& features() const { return feat_; }
+    double confidence() const { return conf_; }   // beat periodicity of the last estimate()
+    // per-frame features, see the FEAT_* indices
+    const std::vector<std::array<float, FEAT_COUNT>>& features() const { return feat_; }
 
 private:
     template <class T> void appendTrim(std::vector<T>& dst, const std::vector<T>& src);
@@ -81,7 +109,8 @@ private:
     std::size_t maxFrames_;
 
     std::vector<float> env_, envLow_, rms_;
-    std::vector<std::array<float, 4>> feat_;
+    std::vector<std::array<float, FEAT_COUNT>> feat_;
+    std::array<bool, 24> nonVocal_{};       // bands outside the vocal range
     std::vector<double> prevLin_, prevBands_;
     bool havePrev_ = false;
     std::vector<float> buf_;
@@ -97,8 +126,11 @@ class IntensityMeter {
 public:
     // fastWindowSec = 0 and attackTau = 0.4 reproduce BPMidentifier exactly;
     // the defaults react to a drop much sooner (see update()).
+    // vocalRobust: score from features that ignore the vocal range, so a
+    // voice on top of the music doesn't lower the intensity.
     explicit IntensityMeter(double updateSec = 0.25, double memorySec = 60.0,
-                            double fastWindowSec = 0.5, double attackTau = 0.15);
+                            double fastWindowSec = 0.5, double attackTau = 0.15,
+                            bool vocalRobust = true);
     void reset();
     std::optional<double> update(const TempoEstimator& est);
     std::optional<double> value() const { return value_; }
@@ -109,10 +141,11 @@ public:
     bool fastUsed() const { return fastUsed_; }
 private:
     double dt_, alpha_, fastWindow_, attackTau_;
+    bool vocalRobust_;
     std::optional<double> lastSlow_, lastFast_;
     bool fastUsed_ = false;
     bool   init_ = false;
-    std::array<double, 4> mu_{}, var_{};
+    std::array<double, 5> mu_{}, var_{};
     std::optional<double> value_;
 };
 
@@ -204,6 +237,77 @@ private:
     OctaveVote octave_;
     BeatClock  clock_;
     int factor_ = 1;
+};
+
+// ---- beat lock -----------------------------------------------------------------
+// Replacement for Tracker: once the readings agree on a tempo, the beat grid is
+// LOCKED and simply runs on. Readings that fit the locked pulse (the same tempo
+// or a 2x / 1/2x / 3:2 relative of it) never move the speed; same-tempo
+// readings nudge the tempo very slowly and the phase only by the median of the
+// recent beat times, so a brief vocal or fill can't drag the GIF off the beat.
+// A different tempo is adopted only after it has held for SWITCH_SEC, and the
+// octave only flips when the other octave dominates the readings for ~8 s.
+class BeatLock {
+public:
+    BeatLock(double octEnter, double octExit, bool strictOctave);
+    void reset();
+    // r = this update's analysis (nullopt = no beat found); music = the
+    // audio sounds like music (MusicGate); now = nowSec() of the update.
+    void update(const std::optional<Analysis>& r, bool music, double now);
+    bool locked() const { return locked_; }
+
+    std::optional<int>  shown;
+    std::optional<Grid> grid;
+
+    static constexpr double DT = 0.25;            // update interval
+    static constexpr double TOL = 0.03;           // "same tempo" tolerance
+    static constexpr int    CONFIRM = 3;          // agreeing readings to lock
+    static constexpr double SWITCH_SEC = 3.0;     // a new tempo must hold this long
+    static constexpr double HOLD_SEC = 4.0;       // keep the beat through gaps this long
+    static constexpr double NO_MUSIC_SEC = 1.0;   // drop the lock after this much non-music
+private:
+    enum Kind { SAME, DOUBLE, HALF, THREE_TWO, OTHER };
+    Kind classify(double bpmValue) const;
+    void lockTo(double bpmValue, std::optional<double> beatTime, double now);
+    void publish(double now);
+
+    OctaveVote octave_;
+    bool locked_ = false;
+    double bpm_ = 0, t0_ = 0;
+    bool havePhase_ = false;
+    std::vector<double> pending_;                 // acquisition readings
+    std::vector<double> phaseErr_;                // recent phase errors (beats)
+    std::vector<int> kinds_;                      // recent reading kinds (~8 s)
+    std::vector<double> halfPhase_;               // phase of HALF readings (beats)
+    double cand_ = 0, candTime_ = 0;              // switch candidate
+    std::optional<double> candBeat_;
+    double miss_ = 0, noMusic_ = 0;
+};
+
+// ---- music / speech gate ------------------------------------------------------
+// Speech has frequent, irregular pauses between words; music is continuous,
+// or, when sparse, its gaps repeat with the beat. Two cues over the last few s:
+//   pause share  : near-silent frames (< 25% of the mean level) in 3 s --
+//                  music ~0-5% (sparse beats up to ~20%), speech 25-45%
+//   periodicity  : the tempo estimator's confidence -- speech <= ~0.12,
+//                  music with a beat ~0.3-0.5
+// Speech = many pauses AND no steady beat. Hysteresis + smoothing.
+// Call after TempoEstimator::estimate() so the confidence is current.
+class MusicGate {
+public:
+    void reset() { score_.reset(); conf_.reset(); music_ = false; }
+    bool update(const TempoEstimator& est);   // -> music?
+    bool music() const { return music_; }
+    std::optional<double> score() const { return score_; }   // smoothed pause share
+    std::optional<double> beatConf() const { return conf_; }  // smoothed periodicity
+    static constexpr double WINDOW_SEC = 3.0;
+    static constexpr double OFF_ABOVE = 0.16;   // more pauses than this ...
+    static constexpr double CONF_SPEECH = 0.15; // ... and a weaker beat -> speech
+    static constexpr double ON_BELOW = 0.10;    // fewer pauses -> music again
+    static constexpr double CONF_MUSIC = 0.22;  // or a clear beat -> music again
+private:
+    std::optional<double> score_, conf_;
+    bool music_ = false;
 };
 
 } // namespace bpm

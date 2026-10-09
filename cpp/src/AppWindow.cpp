@@ -17,6 +17,10 @@ constexpr wchar_t kClassName[] = L"PendulumCursorHiddenWindow";
 constexpr UINT    WM_TRAYICON  = WM_APP + 1;
 constexpr UINT    HOTKEY_ID    = 1;
 constexpr UINT    ID_EXIT      = 1001;
+constexpr UINT    ID_REFRESH   = 1002;
+constexpr UINT    ID_ACTORS    = 1003;
+constexpr UINT_PTR TIMER_TRAY  = 1;        // retries adding the tray icon
+constexpr UINT    TRAY_RETRY_MS = 2000;
 
 // Prefer the embedded app icon; fall back to the generic application icon.
 HICON appIcon() {
@@ -34,7 +38,7 @@ NOTIFYICONDATAW makeTrayData(HWND hwnd) {
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = appIcon();
-    lstrcpynW(nid.szTip, L"Double-Pendulum Cursor  -  right-click to Exit (Ctrl+Alt+P)",
+    lstrcpynW(nid.szTip, L"Double-Pendulum Cursor  -  right-click for Actors / Refresh / Exit",
               ARRAYSIZE(nid.szTip));
     return nid;
 }
@@ -65,14 +69,22 @@ AppWindow::AppWindow(std::function<void()> onExit) : onExit_(std::move(onExit)) 
     wc.hIcon = appIcon();
     RegisterClassExW(&wc);  // ignore "already registered" on a second instance
 
-    HWND hwnd = CreateWindowExW(0, kClassName, L"Pendulum Cursor",
-                                0, 0, 0, 0, 0,
-                                HWND_MESSAGE, nullptr, inst, this);
+    // Explorer broadcasts this when the taskbar is (re)created -- at logon
+    // after we may already be running, or after an Explorer restart.
+    taskbarCreatedMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
+
+    // A hidden TOP-LEVEL window (never shown): unlike a message-only window
+    // (HWND_MESSAGE) it receives the TaskbarCreated broadcast.
+    HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, kClassName, L"Pendulum Cursor",
+                                WS_POPUP, 0, 0, 0, 0,
+                                nullptr, nullptr, inst, this);
     if (!hwnd) throw std::runtime_error("CreateWindowEx failed");
     hwnd_ = hwnd;
+    // let the broadcast through even if UIPI would filter it
+    ChangeWindowMessageFilterEx(hwnd, taskbarCreatedMsg_, MSGFLT_ALLOW, nullptr);
 
-    NOTIFYICONDATAW nid = makeTrayData(hwnd);
-    Shell_NotifyIconW(NIM_ADD, &nid);
+    // At logon the taskbar may not exist yet: keep retrying until it does.
+    if (!addTrayIcon()) SetTimer(hwnd, TIMER_TRAY, TRAY_RETRY_MS, nullptr);
 
     // Global stop hotkey. If it's already taken by another app, we simply rely
     // on the tray menu instead -- not fatal.
@@ -82,6 +94,7 @@ AppWindow::AppWindow(std::function<void()> onExit) : onExit_(std::move(onExit)) 
 AppWindow::~AppWindow() {
     if (hwnd_) {
         HWND hwnd = static_cast<HWND>(hwnd_);
+        KillTimer(hwnd, TIMER_TRAY);
         UnregisterHotKey(hwnd, HOTKEY_ID);
         NOTIFYICONDATAW nid{};
         nid.cbSize = sizeof(nid);
@@ -90,6 +103,17 @@ AppWindow::~AppWindow() {
         Shell_NotifyIconW(NIM_DELETE, &nid);
         DestroyWindow(hwnd);
     }
+}
+
+bool AppWindow::addTrayIcon() {
+    HWND hwnd = static_cast<HWND>(hwnd_);
+    NOTIFYICONDATAW nid = makeTrayData(hwnd);
+    trayAdded_ = Shell_NotifyIconW(NIM_ADD, &nid) != FALSE;
+    if (!trayAdded_) {
+        // maybe it is still there from before (e.g. a lost TaskbarCreated race)
+        trayAdded_ = Shell_NotifyIconW(NIM_MODIFY, &nid) != FALSE;
+    }
+    return trayAdded_;
 }
 
 void AppWindow::requestQuit() {
@@ -103,22 +127,38 @@ void AppWindow::requestQuit() {
 
 long long AppWindow::handle(unsigned msg, unsigned long long wParam, long long lParam) {
     HWND hwnd = static_cast<HWND>(hwnd_);
+    if (taskbarCreatedMsg_ && msg == taskbarCreatedMsg_) {
+        // the taskbar was (re)created: our icon is gone, add it again
+        if (!addTrayIcon()) SetTimer(hwnd, TIMER_TRAY, TRAY_RETRY_MS, nullptr);
+        return 0;
+    }
     switch (msg) {
+        case WM_TIMER:
+            if (wParam == TIMER_TRAY && addTrayIcon()) KillTimer(hwnd, TIMER_TRAY);
+            return 0;
+
         case WM_TRAYICON:
             if (LOWORD(lParam) == WM_RBUTTONUP || LOWORD(lParam) == WM_CONTEXTMENU) {
                 POINT pt;
                 GetCursorPos(&pt);
                 HMENU menu = CreatePopupMenu();
+                AppendMenuW(menu, MF_STRING, ID_ACTORS, L"Actors...");
+                AppendMenuW(menu, MF_STRING, ID_REFRESH, L"Refresh");
+                AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                 AppendMenuW(menu, MF_STRING, ID_EXIT, L"Exit");
                 SetForegroundWindow(hwnd);  // required so the menu dismisses right
                 TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
                 PostMessageW(hwnd, WM_NULL, 0, 0);
                 DestroyMenu(menu);
+            } else if (LOWORD(lParam) == WM_LBUTTONDBLCLK) {
+                if (onActors_) onActors_();
             }
             return 0;
 
         case WM_COMMAND:
             if (LOWORD(wParam) == ID_EXIT) requestQuit();
+            else if (LOWORD(wParam) == ID_REFRESH && onRefresh_) onRefresh_();
+            else if (LOWORD(wParam) == ID_ACTORS && onActors_) onActors_();
             return 0;
 
         case WM_HOTKEY:

@@ -9,8 +9,13 @@ namespace bpm {
 namespace {
 constexpr double OCT_ENTER_V2 = 0.42;
 constexpr double OCT_EXIT_V2  = 0.50;
+// octave rule thresholds with the beat lock, tuned on real tracks: the
+// original 0.42 / 0.50 doubled ordinary ~95 BPM backbeats (ratio ~0.38-0.44)
+constexpr double LOCK_OCT_ENTER = 0.34;
+constexpr double LOCK_OCT_EXIT  = 0.40;
 constexpr double RATIO_WINDOW_SEC = 8.0;
 constexpr std::size_t MAX_OFFSETS = 300;
+constexpr double TERNARY_MARGIN = 0.2;   // 3:2 fix: ternary must beat binary by this
 } // namespace
 
 // ---- AudioRing ----------------------------------------------------------------
@@ -67,9 +72,10 @@ std::optional<double> AudioRing::sampleTime(double sampleIndex) const {
 }
 
 // ---- BeatWorker -----------------------------------------------------------------
-BeatWorker::BeatWorker(AudioRing& ring, bool fastDrop)
-    : ring_(ring), tracker_(3, OCT_ENTER_V2, OCT_EXIT_V2, true),
-      meter_(UPDATE_SEC, 60.0, fastDrop ? 0.5 : 0.0, fastDrop ? 0.15 : 0.4) {}
+BeatWorker::BeatWorker(AudioRing& ring, const Options& opt)
+    : ring_(ring), opt_(opt), tracker_(3, OCT_ENTER_V2, OCT_EXIT_V2, true),
+      lock_(LOCK_OCT_ENTER, LOCK_OCT_EXIT, true),
+      meter_(UPDATE_SEC, 60.0, opt.fastDrop ? 0.5 : 0.0, opt.fastDrop ? 0.15 : 0.4, opt.vocalRobust) {}
 
 BeatState BeatWorker::state() const {
     std::lock_guard<std::mutex> lk(outM_);
@@ -84,24 +90,43 @@ void BeatWorker::step() {
         lastTotal_ = ring_.snapshot(0, none);
         est_ = std::make_unique<TempoEstimator>(sr_, lastTotal_);
         tracker_.reset();
+        lock_.reset();
+        gate_.reset();
         meter_.reset();
         snare_ = std::make_unique<SnareLevels>(sr_);
         snareCache_.clear();
         snareFirstK_ = 0;
         std::lock_guard<std::mutex> lk(outM_);
-        out_.bpm = tracker_.shown;
-        out_.grid = tracker_.grid;
+        out_.bpm.reset();
+        out_.grid.reset();
         return;
     }
     std::vector<float> audio;
     lastTotal_ = ring_.readNew(lastTotal_, audio);
     est_->feed(audio.data(), audio.size());
-    tracker_.update(analyze());
+    const std::optional<Analysis> r = analyze();          // (runs the tempo estimate)
+    const bool music = opt_.musicGate ? gate_.update(*est_) : true;
+    std::optional<int> shownBpm;
+    std::optional<Grid> grid;
+    if (opt_.beatLock) {
+        // "now" in the capture clock, the same timebase as the beat times
+        const double now = ring_.sampleTime(static_cast<double>(lastTotal_)).value_or(nowSec());
+        lock_.update(r, music, now);
+        shownBpm = lock_.shown;
+        grid = lock_.grid;
+    } else {
+        tracker_.update(music ? r : std::nullopt);
+        shownBpm = tracker_.shown;
+        grid = tracker_.grid;
+    }
     const auto intensity = meter_.update(*est_);
 
     std::lock_guard<std::mutex> lk(outM_);
-    out_.bpm = tracker_.shown;
-    out_.grid = tracker_.grid;
+    out_.bpm = shownBpm;
+    out_.grid = grid;
+    out_.music = music;
+    out_.musicScore = gate_.score();
+    out_.rawBpm = r ? std::optional<double>(r->bpm) : std::nullopt;
     out_.intensity = intensity;
     out_.intensitySlow = meter_.lastSlow();
     out_.intensityFast = meter_.lastFast();
@@ -114,6 +139,13 @@ std::optional<Analysis> BeatWorker::analyze() {
     if (!e.bpm) return std::nullopt;
     Analysis r;
     r.bpm = *e.bpm;
+    // 3:2 fix: at a wrong metrical level (e.g. drum & bass read at 116
+    // instead of 174) the hats fall on 1/3 and 2/3 of the "beat" instead of
+    // halfway between beats -- electronic music subdivides in two.
+    {
+        const auto sub = est_->subdivision(60.0 / r.bpm);
+        if (sub.second - sub.first > TERNARY_MARGIN && r.bpm * 1.5 <= 200.0) r.bpm *= 1.5;
+    }
     r.period = 60.0 / r.bpm;
     const auto beatAbs = est_->beatPhase(r.period);
     if (!beatAbs) return r;

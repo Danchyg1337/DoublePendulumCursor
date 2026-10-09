@@ -9,7 +9,8 @@
 //   post-roll last beat frame .. end of the GIF (non-repeatable GIFs).
 // Nothing is shown while no beat is identified or while the music is not
 // intense enough (SHOW / HIDE intensity hysteresis). Sudden beat jumps are
-// ignored unless they hold. GIFs take turns (closest tempo not played yet);
+// ignored unless they hold. Only GIFs within maxBpmDiff of the music's tempo
+// are used, closest first; they take turns (closest not played yet), and
 // repeatable GIFs loop for >= 3 s and change at the end of a loop.
 //
 // Platform independent: the engine is unit tested, the cursor draws the frame.
@@ -31,6 +32,7 @@ namespace dancer {
 
 struct Actor {
     std::string name;
+    std::string file;                     // file name in the actors folder (its id)
     bool loopable = false;
     std::vector<int> delays;              // ms per frame
     std::vector<double> starts;           // frame start times (ms)
@@ -54,6 +56,10 @@ struct Actor {
 
 std::vector<std::unique_ptr<Actor>> loadActors(const std::string& folder);
 
+// Disabled GIFs: file names listed in <actors folder>/disabled.txt
+std::set<std::string> loadDisabledList(const std::string& folder);
+bool saveDisabledList(const std::string& folder, const std::set<std::string>& files);
+
 // One scheduled playback of an actor, positioned in music-beat units.
 struct Run {
     const Actor* actor;
@@ -74,7 +80,8 @@ struct Run {
 
 class DancerEngine {
 public:
-    explicit DancerEngine(std::vector<const Actor*> actors);
+    // maxBpmDiff <= 0: any tempo difference is allowed
+    explicit DancerEngine(std::vector<const Actor*> actors, double maxBpmDiff = 0);
     void reset();
     struct Out { const Actor* actor = nullptr; int frame = 0; };
     // actor == nullptr -> show nothing
@@ -84,15 +91,19 @@ public:
 
 private:
     void advance(double now, const bpm::Grid& grid, double offset);
+    // -> (actor, ratio), or actor == nullptr when no GIF is close enough
     std::pair<const Actor*, double> pick(double bpm, const Actor* exclude = nullptr);
-    void startFresh(double bpm);
+    bool startFresh(double bpm);
     void planNext(const Actor* actor, double ratio, int cycle);
+    void planEnd(int cycle);              // finish the current run, then show nothing
 
     std::vector<const Actor*> actors_;
+    double maxBpmDiff_;
     std::set<const Actor*> used_;
     std::optional<double> phi_;
     double lastT_ = 0, period_ = 0;
     std::optional<Run> cur_, next_;
+    std::optional<double> endAt_;          // planned end (music beats), no follow-up
     std::optional<std::pair<double, double>> phaseJump_, tempoJump_;
     bool following_ = false;
 };
@@ -102,7 +113,9 @@ private:
 // the frame to draw (or nullptr).
 class Dancer {
 public:
-    Dancer(std::string actorsDir, int maxSide, double showIntensity, double hideIntensity);
+    // disabled: file names (Actor::file) that are loaded but never played
+    Dancer(std::string actorsDir, int maxSide, double showIntensity, double hideIntensity,
+           double maxBpmDiff = 0, std::set<std::string> disabled = {});
     ~Dancer();
     Dancer(const Dancer&) = delete;
     Dancer& operator=(const Dancer&) = delete;
@@ -113,15 +126,24 @@ public:
     bool ready() const { return ready_.load(); }
     bool showing() const { return inRed_; }   // intensity is in the "show" zone
 
+    // For the Actors window (main thread only, after ready()):
+    const std::vector<std::unique_ptr<Actor>>& actors() const { return actors_; }
+    const Actor* playing() const { return playing_.load(); }   // any thread
+    const std::set<std::string>& disabled() const { return disabled_; }
+    void setDisabled(std::set<std::string> disabled);   // rebuilds the engine
+
 private:
     bool redZone(const std::optional<double>& intensity);
+    void rebuildEngine();
 
     std::vector<std::unique_ptr<Actor>> actors_;
     std::unique_ptr<DancerEngine> engine_;
     std::atomic<bool> ready_{false};
     std::atomic<bool> cancel_{false};
     std::thread loader_;
-    double show_, hide_;
+    double show_, hide_, maxBpmDiff_;
+    std::set<std::string> disabled_;
+    std::atomic<const Actor*> playing_{nullptr};
     bool inRed_ = false;
 };
 

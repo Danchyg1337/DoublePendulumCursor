@@ -76,6 +76,11 @@ struct Settings {
     double BEAT_OFFSET_MS = 30.0;     // delay to compensate audio output latency
     int    FAST_DROP = 1;             // 1 = intensity reacts to drops in ~0.5 s
                                       // 0 = exactly as BPMidentifier (~2 s)
+    double MAX_BPM_DIFF = 50.0;       // only GIFs within this many BPM of the music play
+                                      // (closest first); 0 = any tempo
+    int    BEAT_LOCK = 1;             // 1 = lock tempo + phase once agreed
+    int    MUSIC_GATE = 1;            // 1 = no beat / GIF for speech-only audio
+    int    VOCAL_ROBUST = 1;          // 1 = vocals don't lower the intensity
     int    DEBUG = 0;                 // 1 = draw BPM + intensity next to the cursor
     int    DEBUG_LOG = 0;             // 1 = also write debug_log.csv next to the exe
 

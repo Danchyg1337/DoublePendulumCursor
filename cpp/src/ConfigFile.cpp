@@ -95,6 +95,7 @@ bool loadConfig(const std::string& path, std::string* warnings) {
         else if (key == "SHOW_INTENSITY") ok = parseDouble(val, g.SHOW_INTENSITY);
         else if (key == "HIDE_INTENSITY") ok = parseDouble(val, g.HIDE_INTENSITY);
         else if (key == "BEAT_OFFSET_MS") ok = parseDouble(val, g.BEAT_OFFSET_MS);
+        else if (key == "MAX_BPM_DIFF")   ok = parseDouble(val, g.MAX_BPM_DIFF);
         // Ints.
         else if (key == "PIVOT_RADIUS") ok = parseInt(val, g.PIVOT_RADIUS);
         else if (key == "BOB_RADIUS")   ok = parseInt(val, g.BOB_RADIUS);
@@ -104,6 +105,9 @@ bool loadConfig(const std::string& path, std::string* warnings) {
         else if (key == "MONITOR_HZ")   ok = parseInt(val, g.MONITOR_HZ);
         else if (key == "DANCER_ENABLED") ok = parseInt(val, g.DANCER_ENABLED);
         else if (key == "FAST_DROP")      ok = parseInt(val, g.FAST_DROP);
+        else if (key == "BEAT_LOCK")      ok = parseInt(val, g.BEAT_LOCK);
+        else if (key == "MUSIC_GATE")     ok = parseInt(val, g.MUSIC_GATE);
+        else if (key == "VOCAL_ROBUST")   ok = parseInt(val, g.VOCAL_ROBUST);
         else if (key == "DEBUG")          ok = parseInt(val, g.DEBUG);
         else if (key == "DEBUG_LOG")      ok = parseInt(val, g.DEBUG_LOG);
         else if (key == "GIF_SIZE")       ok = parseInt(val, g.GIF_SIZE);
@@ -133,6 +137,7 @@ bool loadConfig(const std::string& path, std::string* warnings) {
     g.GIF_SIZE = std::max(16, std::min(g.GIF_SIZE, 512));
     g.GIF_OFFSET_X = std::max(0, g.GIF_OFFSET_X);
     g.GIF_OFFSET_Y = std::max(0, g.GIF_OFFSET_Y);
+    g.MAX_BPM_DIFF = std::max(0.0, g.MAX_BPM_DIFF);
 
     if (warnings) *warnings = warn.str();
     return true;
@@ -191,12 +196,18 @@ std::string defaultConfigText() {
 "HIDE_INTENSITY = 0.62      # disappear below this (no flicker at the edge)\n"
 "BEAT_OFFSET_MS = 30        # shift the beat later to match audio output latency\n"
 "FAST_DROP = 1              # 1 = show ~0.5 s after a drop; 0 = original BPMidentifier (~2 s)\n"
+"MAX_BPM_DIFF = 50          # only GIFs within this many BPM of the music play, closest\n"
+"                           # first (0 = any). GIFs are managed in tray -> Actors...\n"
+"BEAT_LOCK = 1              # 1 = once the beat is found, lock it (vocals/fills can't drag it)\n"
+"MUSIC_GATE = 1             # 1 = speech-only audio (videos, voice chat) never triggers a GIF\n"
+"VOCAL_ROBUST = 1           # 1 = vocals don't lower the intensity\n"
 "\n"
 "# ---- Debug ----\n"
 "# DEBUG = 1 draws next to the cursor, always (even when no GIF shows):\n"
 "#   BPM 128            detected tempo (-- = no beat)\n"
 "#   I 0.72 SHOW        intensity (green..yellow..red); SHOW = GIF allowed\n"
 "#   S 0.65 F 0.81*     2 s score, 0.5 s score; * = the 0.5 s score drove it\n"
+"#   P 0.03 MUSIC       share of pauses in the last 3 s; VOICE = speech, no GIF\n"
 "DEBUG = 0\n"
 "DEBUG_LOG = 0              # 1 = also log those values 4x/s to debug_log.csv\n";
 }

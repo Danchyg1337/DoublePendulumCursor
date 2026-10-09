@@ -8,7 +8,9 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdio>
 #include <cstring>
+#include <set>
 #include <random>
 #include <string>
 #include <vector>
@@ -142,6 +144,59 @@ int main() {
         check(st.bpm && std::abs(*st.bpm - 150) <= 1, "bpm_150", st.bpm ? std::to_string(*st.bpm) : "none");
     }
 
+    // --- beat lock: a 2.5 s fill in a different rhythm (the 128 BPM beat drops
+    //     out, a louder 97 BPM pattern plays) must not move the beat: tempo stays
+    //     128 and the grid stays on the original beats ---------------------------
+    {
+        Sim sim;
+        auto a = synthTrack(128.0, 32.0);
+        const auto other = synthTrack(97.0, 2.5);
+        for (std::size_t i = 0; i < other.size(); ++i) a[20 * SR + i] = 2.0f * other[i];
+        sim.run(std::vector<float>(a.begin(), a.begin() + 20 * SR));
+        const auto before = sim.worker.state();
+        int moved = 0, offPhase = 0;
+        const double per = 60.0 / 128.0;
+        for (std::size_t pos = 20 * SR; pos + SR / 4 <= a.size(); pos += SR / 4) {
+            sim.run(std::vector<float>(a.begin() + pos, a.begin() + pos + SR / 4));
+            const auto st = sim.worker.state();
+            if (!st.bpm || std::abs(*st.bpm - 128) > 1) ++moved;
+            if (st.grid) {
+                double ph = std::fmod(st.grid->t0, per) / per;
+                if (ph > 0.5) ph -= 1.0;
+                if (std::fabs(ph) > 0.08) ++offPhase;
+            }
+        }
+        check(before.bpm && moved == 0 && offPhase == 0, "lock_survives_fill",
+              std::to_string(moved) + " updates off 128, " + std::to_string(offPhase) + " off phase");
+    }
+
+    // --- music gate: speech-like audio (bursts with pauses) never gets a beat ---
+    {
+        Sim sim;
+        std::mt19937 rng(3);
+        std::normal_distribution<float> nd(0.f, 1.f);
+        std::uniform_real_distribution<double> on(0.12, 0.35), off(0.08, 0.30);
+        std::vector<float> sp;
+        while (sp.size() < static_cast<std::size_t>(30 * SR)) {
+            const int n = static_cast<int>(on(rng) * SR);       // a "syllable": voiced buzz
+            for (int i = 0; i < n; ++i) {
+                const double t = static_cast<double>(i) / SR;
+                const double env = std::sin(PI * i / n);
+                sp.push_back(static_cast<float>(0.3 * env * (std::sin(2 * PI * 140 * t) + 0.5 * std::sin(2 * PI * 280 * t) + 0.1 * nd(rng))));
+            }
+            sp.insert(sp.end(), static_cast<std::size_t>(off(rng) * SR), 0.0f);
+        }
+        int beats = 0, musicUpdates = 0;
+        for (std::size_t pos = 0; pos + SR / 4 <= sp.size(); pos += SR / 4) {
+            sim.run(std::vector<float>(sp.begin() + pos, sp.begin() + pos + SR / 4));
+            const auto st = sim.worker.state();
+            beats += st.bpm.has_value();
+            musicUpdates += st.music;
+        }
+        check(beats == 0 && musicUpdates == 0, "speech_no_beat",
+              std::to_string(beats) + " beat / " + std::to_string(musicUpdates) + " music updates");
+    }
+
     // --- GIF decoder ----------------------------------------------------------------
     std::vector<std::vector<std::uint8_t>> fr;
     for (int f = 0; f < 4; ++f) {
@@ -193,6 +248,18 @@ int main() {
               std::to_string(onBeat) + "/" + std::to_string(beatsChecked));
         check(!eng.step(11.0, std::nullopt, std::nullopt).actor, "dancer_hidden_without_beat");
 
+        // MAX_BPM_DIFF: a 300 BPM GIF is never used for 120 BPM music with a
+        // 50 BPM limit, but is with a 200 BPM limit
+        {
+            dancer::DancerEngine strict({&a}, 50.0), loose({&a}, 200.0);
+            bool strictShown = false, looseShown = false;
+            for (int i = 0; i < 400; ++i) {
+                strictShown |= strict.step(i * 0.005, 120, grid).actor != nullptr;
+                looseShown |= loose.step(i * 0.005, 120, grid).actor != nullptr;
+            }
+            check(!strictShown && looseShown, "max_bpm_diff");
+        }
+
         // first appearance must not hold a frozen frame: from any beat phase,
         // the first frame may last at most ~1 stretched GIF frame (here 250 ms
         // at 120 BPM, +35% intro stretch), and beat frames still land on beats
@@ -218,6 +285,15 @@ int main() {
         check(worstHold <= 0.25 * 1.35 + 0.01, "dancer_no_start_stutter",
               "first frame held " + std::to_string(worstHold) + " s");
         check(beatsOk, "dancer_fresh_start_on_beat");
+    }
+
+    // --- disabled list round trip ---------------------------------------------------
+    {
+        const std::string dir = ".";
+        dancer::saveDisabledList(dir, {"a.gifbpm", "b c.gifbpm"});
+        const auto back = dancer::loadDisabledList(dir);
+        std::remove("disabled.txt");
+        check(back == std::set<std::string>{"a.gifbpm", "b c.gifbpm"}, "disabled_list");
     }
 
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);

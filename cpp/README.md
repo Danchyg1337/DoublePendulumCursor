@@ -42,7 +42,43 @@ SHOW_INTENSITY = 0.70
 HIDE_INTENSITY = 0.62
 BEAT_OFFSET_MS = 30    # shift beats later to match audio output latency
 FAST_DROP = 1          # 1 = appear ~0.5 s after a drop (0 = original, ~2 s)
+MAX_BPM_DIFF = 50      # only GIFs within this many BPM of the music play (0 = any)
+BEAT_LOCK = 1          # lock tempo + phase once found (vocals/fills can't drag it)
+MUSIC_GATE = 1         # speech-only audio (videos, voice chat) never triggers a GIF
+VOCAL_ROBUST = 1       # vocals don't lower the intensity
 ```
+
+How the beat is followed (`BEAT_LOCK = 1`): once three readings agree, the
+tempo and beat phase are **locked** and the beat simply runs on. Readings that
+fit the locked pulse (same tempo, double, half, or 3:2) never change the speed;
+the phase is corrected only by the median of recent beat times, so a vocal or
+fill can't drag the GIF off the beat. A different tempo is adopted only after
+it holds for 3 s; the octave (e.g. 87 vs 174) flips only when the other octave
+dominates for ~8 s. Drum & bass read at 116 (the 2/3 "breakbeat" level) is
+corrected to 174: at the wrong level the hats fall on thirds of the beat.
+
+GIF choice: only GIFs within `MAX_BPM_DIFF` of the music's tempo are used,
+closest first, taking turns. If none is close enough, none is shown.
+
+Music check (`MUSIC_GATE = 1`): speech has frequent irregular pauses and no
+steady beat; music is continuous, or its gaps repeat with the beat. Speech-only
+audio gets no beat and no GIF.
+
+### Tray menu
+
+Right-click the tray icon (or double-click it for Actors):
+
+- **Actors...** -- every GIF in the actors folder as an animated tile with its
+  BPM. Click a tile to disable / enable it (kept in `actors/disabled.txt`).
+  *Add GIFs...* copies `.gifbpm` files into the folder; *Open folder* opens it.
+  The playing GIF is outlined; tiles show how far their tempo is from the music
+  (or "too far" beyond `MAX_BPM_DIFF`).
+- **Refresh** -- reloads `pendulum.conf`, `cursors.conf` and the actors, as if
+  the app had been restarted.
+- **Exit**
+
+The tray icon also appears when the app starts at logon before the taskbar is
+ready (it retries, and re-adds itself if Explorer restarts).
 
 The GIF is part of the cursor image, so it never steals clicks.
 
@@ -55,6 +91,7 @@ BPM 128            detected tempo (-- = no beat yet)
 I 0.72 SHOW        intensity, coloured green..yellow..red; SHOW = GIF allowed
 S 0.65 F 0.81*     score of the 2 s window, of the 0.5 s window;
                    * = the 0.5 s (FAST_DROP) score drove the value this update
+P 0.03 MUSIC       share of pauses in the last 3 s; VOICE = speech (no GIF)
 ```
 
 `DEBUG_LOG = 1` also writes those values 4 times a second to
@@ -226,7 +263,8 @@ let it create them on first run.
 | `include/BeatWorker.h`, `src/BeatWorker.cpp` | Audio ring buffer + the 4 Hz analysis loop (`ClassicWorker`). Portable. |
 | `include/LoopbackCapture.h`, `src/LoopbackCapture.cpp` | Win32: WASAPI loopback of the default output device; analysis thread. |
 | `include/GifDecoder.h`, `src/GifDecoder.cpp` | Self-contained animated GIF decoder + bilinear resize. Portable. |
-| `include/Dancer.h`, `src/Dancer.cpp` | `.gifbpm` loader and the beat-synced playback engine (port of `gif_dancer.py`). Portable. |
+| `include/Dancer.h`, `src/Dancer.cpp` | `.gifbpm` loader and the beat-synced playback engine (port of `gif_dancer.py`), disabled list. Portable. |
+| `include/ActorsWindow.h`, `src/ActorsWindow.cpp` | Win32: the tray's Actors window (own thread) + its mailbox to the main loop. |
 | `actors/` | The `.gifbpm` dancers. |
 | `src/main.cpp` | Loads both config files, frame pacing, message-pumped main loop. |
 | `install.bat`/`.ps1`, `uninstall.bat`/`.ps1` | Set up / remove the logon autostart task. |

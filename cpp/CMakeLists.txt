@@ -29,11 +29,12 @@ if(WIN32)
         src/LoopbackCapture.cpp
         src/GifDecoder.cpp
         src/Dancer.cpp
+        src/ActorsWindow.cpp
         resources/app.rc
     )
     # 'include' for headers, 'resources' so the .rc finds app.ico.
     target_include_directories(pendulum_cursor PRIVATE include resources)
-    target_link_libraries(pendulum_cursor PRIVATE user32 gdi32 winmm shell32 ole32)
+    target_link_libraries(pendulum_cursor PRIVATE user32 gdi32 winmm shell32 ole32 comdlg32)
     if(MSVC)
         target_compile_options(pendulum_cursor PRIVATE /O2 /W4 /permissive-)
     else()

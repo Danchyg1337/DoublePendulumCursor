@@ -144,22 +144,6 @@ double naturalPhi(const Actor* actor, double ratio, double gifMs) {
     return gifMs / segMs / ratio;
 }
 
-// -> (cost, actor, ratio) with the smallest tempo change
-bool bestMatch(const std::vector<const Actor*>& actors, double bpm,
-               const Actor*& best, double& bestRatio) {
-    double bestCost = std::numeric_limits<double>::infinity();
-    best = nullptr;
-    for (const Actor* a : actors) {
-        if (!a->usable || a->bpm <= 0) continue;
-        for (const auto& rp : RATIOS) {
-            const double stretch = bpm * rp[0] / a->bpm;        // >1: GIF plays faster
-            const double cost = std::fabs(std::log2(stretch)) + rp[1];
-            if (!best || cost < bestCost) { bestCost = cost; best = a; bestRatio = rp[0]; }
-        }
-    }
-    return best != nullptr;
-}
-
 } // namespace
 
 // ---- Actor ---------------------------------------------------------------------
@@ -167,7 +151,9 @@ Actor Actor::load(const std::string& path) {
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) throw std::runtime_error("cannot open");
     std::vector<std::uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    return parse(data, std::filesystem::u8path(path).stem().u8string());
+    Actor a = parse(data, std::filesystem::u8path(path).stem().u8string());
+    a.file = std::filesystem::u8path(path).filename().u8string();
+    return a;
 }
 
 Actor Actor::parse(const std::vector<std::uint8_t>& data, const std::string& fallbackName) {
@@ -274,6 +260,29 @@ std::vector<std::unique_ptr<Actor>> loadActors(const std::string& folder) {
     return out;
 }
 
+std::set<std::string> loadDisabledList(const std::string& folder) {
+    std::set<std::string> out;
+    std::ifstream f(std::filesystem::u8path(folder) / "disabled.txt");
+    std::string line;
+    while (std::getline(f, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+        std::size_t i = 0;
+        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+        line = line.substr(i);
+        if (!line.empty() && line[0] != '#') out.insert(line);
+    }
+    return out;
+}
+
+bool saveDisabledList(const std::string& folder, const std::set<std::string>& files) {
+    std::ofstream f(std::filesystem::u8path(folder) / "disabled.txt", std::ios::trunc);
+    if (!f) return false;
+    f << "# GIFs (file names in this folder) that are never played.\n"
+         "# Edited by the Actors window (tray icon -> Actors...).\n";
+    for (const auto& name : files) f << name << '\n';
+    return static_cast<bool>(f);
+}
+
 // ---- Run -----------------------------------------------------------------------
 Run::Run(const Actor* a, double r, double pb, double pre)
     : actor(a), ratio(r), phiB(pb), prePhi(pre), phiStart(pb - pre) {
@@ -309,7 +318,8 @@ double Run::gifTime(double phi) const {
 }
 
 // ---- DancerEngine --------------------------------------------------------------
-DancerEngine::DancerEngine(std::vector<const Actor*> actors) : actors_(std::move(actors)) { reset(); }
+DancerEngine::DancerEngine(std::vector<const Actor*> actors, double maxBpmDiff)
+    : actors_(std::move(actors)), maxBpmDiff_(maxBpmDiff) { reset(); }
 
 void DancerEngine::reset() {
     phi_.reset();
@@ -317,6 +327,7 @@ void DancerEngine::reset() {
     period_ = 0;
     cur_.reset();
     next_.reset();
+    endAt_.reset();
     phaseJump_.reset();
     following_ = false;
     tempoJump_.reset();
@@ -375,22 +386,31 @@ void DancerEngine::advance(double now, const bpm::Grid& grid, double offset) {
 }
 
 std::pair<const Actor*, double> DancerEngine::pick(double bpm, const Actor* exclude) {
-    std::vector<const Actor*> pool;
+    // candidates: usable GIFs whose tempo is within maxBpmDiff of the music
+    std::vector<const Actor*> cands;
     for (const Actor* a : actors_)
-        if (!used_.count(a) && a != exclude) pool.push_back(a);
-    if (pool.empty()) {
-        used_.clear();
-        for (const Actor* a : actors_) if (a != exclude) pool.push_back(a);
-        if (pool.empty()) pool = actors_;
-    }
+        if (a->usable && a->bpm > 0 && (maxBpmDiff_ <= 0 || std::fabs(a->bpm - bpm) <= maxBpmDiff_))
+            cands.push_back(a);
+    if (cands.empty()) return { nullptr, 1.0 };
+    // closest tempo first; take turns: the closest one not played yet
+    std::stable_sort(cands.begin(), cands.end(), [&](const Actor* x, const Actor* y) {
+        return std::fabs(x->bpm - bpm) < std::fabs(y->bpm - bpm);
+    });
     const Actor* actor = nullptr;
-    double ratio = 1.0;
-    if (!bestMatch(pool, bpm, actor, ratio)) { actor = pool.front(); ratio = 1.0; }
+    for (const Actor* a : cands)
+        if (!used_.count(a) && a != exclude) { actor = a; break; }
+    if (!actor) {
+        // every close GIF has had its turn: start a new round (still avoiding
+        // the one just played unless it is the only candidate)
+        for (const Actor* a : cands) used_.erase(a);
+        for (const Actor* a : cands) if (a != exclude) { actor = a; break; }
+        if (!actor) actor = cands.front();
+    }
     used_.insert(actor);
-    return { actor, ratio };
+    return { actor, 1.0 };
 }
 
-void DancerEngine::startFresh(double bpm) {
+bool DancerEngine::startFresh(double bpm) {
     // Start moving right away -- never hold a frozen frame 0 while waiting for
     // the "right" beat (that showed as a stutter when the GIF first appeared).
     //  a) Play the intro from frame 0 starting now, slightly sped up / slowed
@@ -399,6 +419,7 @@ void DancerEngine::startFresh(double bpm) {
     //     as if it had started on time, skipping < 1 beat of its intro.
     // Either way the beat frames stay on the music's beats.
     const auto [actor, ratio] = pick(bpm);
+    if (!actor) return false;                            // no GIF close to this tempo
     const double phi = *phi_;
     const double pre = naturalPhi(actor, ratio, actor->beatTimes.front());
     double bestB = 0, bestCost = std::numeric_limits<double>::infinity();
@@ -413,6 +434,15 @@ void DancerEngine::startFresh(double bpm) {
     else
         cur_.emplace(actor, ratio, std::floor(phi + pre), pre);  // b) join in progress
     next_.reset();
+    return true;
+}
+
+void DancerEngine::planEnd(int cycle) {
+    Run& cur = *cur_;
+    const Actor* a = cur.actor;
+    cur.endCycle = cycle;
+    cur.postPhi = naturalPhi(a, cur.ratio, a->duration - a->beatTimes.back());
+    endAt_ = cur.lastBeatPhi(cycle) + *cur.postPhi;
 }
 
 void DancerEngine::planNext(const Actor* actor, double ratio, int cycle) {
@@ -440,22 +470,27 @@ DancerEngine::Out DancerEngine::step(double now, std::optional<int> bpm,
     const double phi = *phi_;
     const double b = static_cast<double>(*bpm);
 
-    if (!cur_) startFresh(b);
+    if (!cur_ && !startFresh(b)) return {};              // no GIF close to this tempo
     if (next_ && phi >= next_->phiStart) { cur_ = next_; next_.reset(); }
+    if (endAt_ && phi >= *endAt_) {                      // nothing was close enough to follow
+        cur_.reset(); next_.reset(); endAt_.reset();
+        if (!startFresh(b)) return {};
+    }
     if (!cur_->startedAt && phi >= cur_->phiStart) cur_->startedAt = now;
 
     // decide what follows during the last beat gap before the cycle's last beat
     // frame (deciding later would change frames already shown). Non-repeatable:
     // always change when it ends. Repeatable: change at the end of the loop
     // that ends after MIN_LOOP_PLAY_SEC of playing -- never cut a loop short.
-    if (!next_ && phi >= cur_->phiB) {
+    if (!next_ && !endAt_ && phi >= cur_->phiB) {
         Run& cur = *cur_;
         if (!cur.actor->loopable) {
             if (phi >= cur.lastBeatPhi(0) - cur.segPhi()) {
                 const auto [a, r] = pick(b, cur.actor);
-                planNext(a, r, 0);
+                if (a) planNext(a, r, 0);
+                else planEnd(0);                          // tempo moved away from every GIF
             }
-        } else if (actors_.size() > 1 && cur.startedAt) {
+        } else if (cur.startedAt) {
             const int cycle = std::max(0, static_cast<int>(std::floor(
                 (phi - cur.phiB) * cur.ratio / static_cast<double>(cur.actor->segments.size()))));
             const double lb = cur.lastBeatPhi(cycle);
@@ -463,7 +498,9 @@ DancerEngine::Out DancerEngine::step(double now, std::optional<int> bpm,
                 const double loopEndAt = now + (lb - phi) * period_;
                 if (loopEndAt - *cur.startedAt >= MIN_LOOP_PLAY_SEC) {
                     const auto [a, r] = pick(b, cur.actor);
-                    planNext(a, r, cycle);
+                    if (!a) planEnd(cycle);
+                    else if (a != cur.actor) planNext(a, r, cycle);
+                    // a == cur.actor: the only close GIF -- just keep looping
                 }
             }
         }
@@ -476,28 +513,41 @@ DancerEngine::Out DancerEngine::step(double now, std::optional<int> bpm,
 }
 
 // ---- Dancer --------------------------------------------------------------------
-Dancer::Dancer(std::string actorsDir, int maxSide, double showIntensity, double hideIntensity)
-    : show_(showIntensity), hide_(hideIntensity) {
+Dancer::Dancer(std::string actorsDir, int maxSide, double showIntensity, double hideIntensity,
+               double maxBpmDiff, std::set<std::string> disabled)
+    : show_(showIntensity), hide_(hideIntensity), maxBpmDiff_(maxBpmDiff),
+      disabled_(std::move(disabled)) {
     loader_ = std::thread([this, dir = std::move(actorsDir), maxSide] {
         auto actors = loadActors(dir);
-        std::vector<const Actor*> ok;
-        for (auto& a : actors) {
+        std::vector<std::unique_ptr<Actor>> ok;
+        for (auto& a : actors) {                          // disabled ones too (Actors window)
             if (cancel_) return;
             try { a->decode(maxSide, &cancel_); } catch (...) { a->frames.clear(); }
-            if (!a->frames.empty()) ok.push_back(a.get());
+            if (!a->frames.empty()) ok.push_back(std::move(a));
         }
         if (cancel_) return;
-        actors_ = std::move(actors);
-        if (!ok.empty()) {
-            engine_ = std::make_unique<DancerEngine>(std::move(ok));
-            ready_.store(true);
-        }
+        actors_ = std::move(ok);
+        rebuildEngine();
+        ready_.store(true);
     });
 }
 
 Dancer::~Dancer() {
     cancel_ = true;
     if (loader_.joinable()) loader_.join();
+}
+
+void Dancer::rebuildEngine() {
+    std::vector<const Actor*> enabled;
+    for (const auto& a : actors_)
+        if (!disabled_.count(a->file)) enabled.push_back(a.get());
+    engine_ = std::make_unique<DancerEngine>(std::move(enabled), maxBpmDiff_);
+    playing_.store(nullptr);
+}
+
+void Dancer::setDisabled(std::set<std::string> disabled) {
+    disabled_ = std::move(disabled);
+    if (ready_.load()) rebuildEngine();
 }
 
 bool Dancer::redZone(const std::optional<double>& x) {
@@ -514,6 +564,7 @@ const gif::Image* Dancer::update(double now, const std::optional<int>& bpmShown,
     const bool show = redZone(intensity);
     const auto out = engine_->step(now, show ? bpmShown : std::nullopt,
                                    show ? grid : std::nullopt, offsetSec);
+    playing_.store(out.actor);
     if (!out.actor || out.actor->frames.empty()) return nullptr;
     const int f = std::max(0, std::min(out.frame, static_cast<int>(out.actor->frames.size()) - 1));
     return &out.actor->frames[static_cast<std::size_t>(f)];
